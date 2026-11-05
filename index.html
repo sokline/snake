@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Змейка — SKLN 2026</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐍</text></svg>" />
+</head>
+<body data-theme="dark">
+
+  <!-- ЗАСТАВКА -->
+  <section id="splash" class="splash">
+    <div class="splash-inner">
+      <h1 class="splash-title">ЗМЕЙКА</h1>
+      <div class="splash-meta">
+        <span>разработчик <b>SKLN</b></span>
+        <span>2026 · v1.0</span>
+      </div>
+      <div class="splash-bar"><div class="splash-bar-fill"></div></div>
+    </div>
+  </section>
+
+  <!-- ОСНОВНОЙ ЭКРАН -->
+  <main id="app" class="app hidden">
+    <header class="topbar">
+      <div class="brand">🐍 Змейка</div>
+      <div class="stats">
+        <span>Счёт: <b id="score">0</b></span>
+        <span>Рекорд: <b id="best">0</b></span>
+      </div>
+      <div class="menu">
+        <select id="theme" title="Тема">
+          <option value="dark">Тёмная</option>
+          <option value="light">Светлая</option>
+          <option value="green">Матрица</option>
+          <option value="ocean">Океан</option>
+        </select>
+        <select id="profile" title="Профиль"></select>
+        <button id="btn-pause" title="Пауза">⏸</button>
+        <button id="btn-sound" title="Звук">🔊</button>
+        <button id="btn-menu" title="Меню">⋮</button>
+      </div>
+    </header>
+
+    <div class="stage">
+      <canvas id="game"></canvas>
+      <div id="overlay" class="overlay hidden">
+        <div class="overlay-box">
+          <h2 id="overlay-title">Пауза</h2>
+          <p id="overlay-text">Нажмите «Старт» или пробел</p>
+          <div class="overlay-actions">
+            <button class="btn primary" id="btn-start">▶ Старт</button>
+            <button class="btn" id="btn-reset">↻ Сброс</button>
+            <button class="btn" id="btn-export">⬆ Экспорт</button>
+            <button class="btn" id="btn-import">⬇ Импорт</button>
+            <input type="file" id="file-import" accept=".json" hidden />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Свайп-панель для мобильных -->
+    <div class="touchpad" id="touchpad">
+      <button data-dir="up">▲</button>
+      <div class="row">
+        <button data-dir="left">◀</button>
+        <button data-dir="down">▼</button>
+        <button data-dir="right">▶</button>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <small>SKLN · 2026 · v1.0 · PWA</small>
+    </footer>
+  </main>
+
+  <script src="game.js"></script>
+</body>
+</html>
