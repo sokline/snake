@@ -1,0 +1,18 @@
+{
+  "name": "Змейка — SKLN 2026",
+  "short_name": "Змейка",
+  "description": "Классическая змейка. PWA, офлайн, мультипрофильность.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#22d3ee",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 192 192%22><rect width=%22192%22 height=%22192%22 rx=%2232%22 fill=%22%230f172a%22/><text x=%2296%22 y=%22130%22 font-size=%22120%22 text-anchor=%22middle%22>🐍</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
