@@ -81,11 +81,12 @@ body{
   position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
   background:rgba(0,0,0,.55); backdrop-filter:blur(6px); border-radius:12px;
   animation:fadein .3s ease;
+  z-index:20;
 }
 @keyframes fadein{from{opacity:0}to{opacity:1}}
 .overlay-box{
   background:var(--panel); padding:1.5rem 2rem; border-radius:16px;
-  text-align:center; min-width:260px;
+  text-align:center; min-width:260px; max-width:90%;
   border:1px solid rgba(255,255,255,.1);
 }
 .overlay-box h2{margin-bottom:.5rem; color:var(--accent)}
@@ -93,55 +94,29 @@ body{
 .btn{
   padding:.55rem 1rem; border-radius:10px; border:1px solid rgba(255,255,255,.15);
   background:transparent; color:var(--fg); cursor:pointer; font-size:.9rem;
-  transition:all .2s;
+  transition:all .2s; touch-action:manipulation;
 }
 .btn:hover{background:var(--accent); color:#0f172a}
 .btn.primary{background:var(--accent); color:#0f172a; font-weight:600}
 .btn.primary:hover{background:var(--accent2)}
 
-/* Мобильные кнопки */
-.touchpad{
-  display:none; padding:.75rem; background:var(--panel);
+/* Зона управления под canvas */
+.controls-bottom{
+  min-height:140px; padding:1rem;
+  background:var(--panel); backdrop-filter:blur(8px);
   border-top:1px solid rgba(255,255,255,.06);
+  display:flex; align-items:center; justify-content:center;
 }
-.touchpad button{
-  flex:1; padding:.9rem; font-size:1.3rem; border-radius:10px;
-  background:var(--grid); color:var(--fg); border:1px solid rgba(255,255,255,.1);
-  cursor:pointer;
-}
-.touchpad button:active{background:var(--accent); color:#0f172a}
-.touchpad .row{display:flex; gap:.5rem; margin-top:.5rem}
-
-.footer{padding:.4rem; text-align:center; opacity:.6; font-size:.75rem}
-
-/* Адаптив */
-@media (max-width:720px){
-  .topbar{padding:.5rem}
-  .brand{font-size:1rem}
-  .stats{font-size:.8rem; gap:.6rem}
-  .menu select, .menu button{padding:.3rem .45rem; font-size:.8rem}
-  .touchpad{display:block}
-  .stage{padding:.4rem}
-}
-@media (max-width:400px){
-  .stats{display:none}
-}
-/* ===== Схемы управления ===== */
-.controls-layer{
-  position:absolute; inset:0; pointer-events:none; z-index:10;
-}
-.controls-layer.active{pointer-events:auto}
 
 /* D-Pad */
 .dpad{
-  position:absolute; bottom:20px; left:50%; transform:translateX(-50%);
   display:grid; grid-template-columns:repeat(3,60px); grid-template-rows:repeat(3,60px);
   gap:4px;
 }
 .dpad button{
   background:rgba(34,211,238,.15); border:2px solid rgba(34,211,238,.3);
   border-radius:12px; color:var(--fg); font-size:1.5rem; cursor:pointer;
-  transition:all .1s;
+  transition:all .1s; touch-action:manipulation;
 }
 .dpad button:active{background:var(--accent); color:#0f172a; transform:scale(.95)}
 .dpad .up{grid-column:2; grid-row:1}
@@ -151,10 +126,10 @@ body{
 
 /* Джойстик */
 .joystick-zone{
-  position:absolute; bottom:20px; left:20px;
   width:140px; height:140px;
   background:rgba(34,211,238,.1); border:2px solid rgba(34,211,238,.3);
-  border-radius:50%;
+  border-radius:50%; position:relative;
+  touch-action:none;
 }
 .joystick-knob{
   position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
@@ -162,34 +137,40 @@ body{
   background:var(--accent); border-radius:50%;
   box-shadow:0 4px 12px rgba(0,0,0,.3);
   transition:transform .1s;
+  pointer-events:none;
 }
-
-/* Тап-зоны */
-.tap-zones{position:absolute; inset:0; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr}
-.tap-zones div{
-  display:flex; align-items:center; justify-content:center;
-  font-size:2rem; opacity:.2; color:var(--fg);
-  border:1px solid rgba(255,255,255,.1);
-  transition:all .15s;
-}
-.tap-zones div:active{opacity:.6; background:rgba(34,211,238,.2)}
-.tap-zones .top{grid-column:1/3; grid-row:1}
-.tap-zones .bottom{grid-column:1/3; grid-row:2}
-.tap-zones .left{grid-column:1; grid-row:1/3}
-.tap-zones .right{grid-column:2; grid-row:1/3}
 
 /* Повороты */
 .turn-btns{
-  position:absolute; bottom:20px; left:0; right:0;
-  display:flex; justify-content:space-between; padding:0 20px;
+  display:flex; gap:2rem;
 }
 .turn-btns button{
-  width:45%; height:100px;
+  width:120px; height:100px;
   background:rgba(34,211,238,.15); border:2px solid rgba(34,211,238,.3);
   border-radius:16px; color:var(--fg); font-size:3rem; cursor:pointer;
-  transition:all .1s;
+  transition:all .1s; touch-action:manipulation;
 }
 .turn-btns button:active{background:var(--accent); color:#0f172a; transform:scale(.97)}
+
+/* Тап-зоны (overlay на canvas) */
+.tap-zones-overlay{
+  position:absolute; inset:0; z-index:5;
+  display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
+  pointer-events:none;
+}
+.tap-zones-overlay.active{pointer-events:auto}
+.tap-zones-overlay div{
+  display:flex; align-items:center; justify-content:center;
+  font-size:2.5rem; opacity:.15; color:var(--fg);
+  border:1px solid rgba(255,255,255,.05);
+  transition:all .15s;
+  touch-action:manipulation;
+}
+.tap-zones-overlay div:active{opacity:.5; background:rgba(34,211,238,.2)}
+.tap-zones-overlay .top{grid-column:1/3; grid-row:1}
+.tap-zones-overlay .bottom{grid-column:1/3; grid-row:2}
+.tap-zones-overlay .left{grid-column:1; grid-row:1/3}
+.tap-zones-overlay .right{grid-column:2; grid-row:1/3}
 
 /* Меню настроек */
 .settings-modal{
@@ -201,17 +182,46 @@ body{
 .settings-box{
   background:var(--panel); padding:2rem; border-radius:20px;
   max-width:400px; width:90%; border:1px solid rgba(255,255,255,.1);
+  max-height:90vh; overflow-y:auto;
 }
 .settings-box h2{margin-bottom:1.5rem; color:var(--accent); text-align:center}
 .setting-group{margin-bottom:1.5rem}
 .setting-group label{display:block; margin-bottom:.5rem; font-weight:600; font-size:.9rem}
-.setting-group select{
+.setting-group select, .setting-group input{
   width:100%; padding:.6rem; border-radius:10px;
   background:var(--grid); color:var(--fg); border:1px solid rgba(255,255,255,.15);
   font-size:.95rem; cursor:pointer;
 }
-.setting-group select:focus{outline:2px solid var(--accent)}
+.setting-group select:focus, .setting-group input:focus{outline:2px solid var(--accent)}
 .settings-actions{display:flex; gap:.5rem; justify-content:flex-end; margin-top:1.5rem}
 
-/* Скрыть ненужные элементы управления */
-.control-hidden{display:none !important}
+/* История результатов */
+.history-list{
+  max-height:200px; overflow-y:auto; margin-top:1rem;
+  border:1px solid rgba(255,255,255,.1); border-radius:10px; padding:.5rem;
+}
+.history-item{
+  display:flex; justify-content:space-between; padding:.5rem;
+  border-bottom:1px solid rgba(255,255,255,.05); font-size:.85rem;
+}
+.history-item:last-child{border-bottom:none}
+.history-item .date{opacity:.7}
+.history-item .score{color:var(--accent); font-weight:600}
+
+.footer{padding:.4rem; text-align:center; opacity:.6; font-size:.75rem}
+
+/* Адаптив */
+@media (max-width:720px){
+  .topbar{padding:.5rem}
+  .brand{font-size:1rem}
+  .stats{font-size:.8rem; gap:.6rem}
+  .menu select, .menu button{padding:.3rem .45rem; font-size:.8rem}
+  .controls-bottom{min-height:120px; padding:.75rem}
+  .dpad{grid-template-columns:repeat(3,50px); grid-template-rows:repeat(3,50px)}
+  .turn-btns button{width:100px; height:80px; font-size:2.5rem}
+  .joystick-zone{width:120px; height:120px}
+  .stage{padding:.4rem}
+}
+@media (max-width:400px){
+  .stats{display:none}
+}
