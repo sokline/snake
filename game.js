@@ -1,4 +1,4 @@
-/* ========== Змейка · SKLN 2026 · v1.0 ========== */
+/* ========== Змейка · SKLN 2026 · v1.0 · OPTIMIZED ========== */
 
 const $ = id => document.getElementById(id);
 const canvas = $('game'), ctx = canvas.getContext('2d');
@@ -9,8 +9,11 @@ const STATE = {
   snake: [], dir: {x:1,y:0}, nextDir: {x:1,y:0},
   food: {x:10,y:10}, score:0, best:0,
   running:false, paused:false, gameOver:false,
-  speed:140, timer:null, sound:true, theme:'dark',
-  profile:'Игрок 1', profiles:{}
+  speed:140, lastTime:0, accumulator:0,
+  sound:true, theme:'dark',
+  profile:'Игрок 1', profiles:{},
+  controlScheme:'dpad', // dpad, swipe, joystick, tapzones, turns, hybrid
+  animFrame:null
 };
 
 // ----- Заставка -----
@@ -40,7 +43,8 @@ function saveAll(){
     profiles: STATE.profiles,
     currentProfile: STATE.profile,
     theme: STATE.theme,
-    sound: STATE.sound
+    sound: STATE.sound,
+    controlScheme: STATE.controlScheme
   };
   localStorage.setItem('snake_save', JSON.stringify(data));
 }
@@ -53,11 +57,13 @@ function loadAll(){
     STATE.profile = d.currentProfile || 'Игрок 1';
     STATE.theme = d.theme || 'dark';
     STATE.sound = d.sound !== false;
+    STATE.controlScheme = d.controlScheme || 'dpad';
     document.body.dataset.theme = STATE.theme;
     $('theme').value = STATE.theme;
     $('btn-sound').textContent = STATE.sound ? '🔊' : '🔇';
     loadProfile();
     renderProfiles();
+    applyControlScheme();
   }catch(e){console.warn('load fail',e)}
 }
 function loadProfile(){
@@ -134,7 +140,7 @@ $('theme').onchange = e => {
   saveAll(); draw();
 };
 
-// ----- Звук (Web Audio API) -----
+// ----- Звук -----
 let audioCtx;
 function beep(freq=440, dur=.1, type='square'){
   if(!STATE.sound) return;
@@ -155,12 +161,41 @@ $('btn-sound').onclick = () => {
   saveAll();
 };
 
-// ----- Игровой цикл -----
+// ----- Мгновенная смена направления -----
+function changeDirection(newDir){
+  // Запрет разворота на 180°
+  if(newDir.x === -STATE.dir.x && newDir.y === -STATE.dir.y) return;
+  STATE.nextDir = newDir;
+  STATE.dir = newDir; // Мгновенное применение!
+}
+
+// ----- Игровой цикл на RAF -----
+function gameLoop(timestamp){
+  if(!STATE.running || STATE.paused){
+    STATE.animFrame = null;
+    return;
+  }
+  
+  if(!STATE.lastTime) STATE.lastTime = timestamp;
+  const delta = timestamp - STATE.lastTime;
+  STATE.lastTime = timestamp;
+  STATE.accumulator += delta;
+  
+  while(STATE.accumulator >= STATE.speed){
+    step();
+    STATE.accumulator -= STATE.speed;
+  }
+  
+  draw();
+  STATE.animFrame = requestAnimationFrame(gameLoop);
+}
+
 function resetGame(){
   STATE.snake = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
   STATE.dir = {x:1,y:0}; STATE.nextDir = {x:1,y:0};
   STATE.score = 0; STATE.speed = 140;
   STATE.gameOver = false; STATE.paused = false;
+  STATE.accumulator = 0; STATE.lastTime = 0;
   $('score').textContent = 0;
   placeFood(); draw();
 }
@@ -171,14 +206,10 @@ function placeFood(){
   }
 }
 function step(){
-  STATE.dir = STATE.nextDir;
   const head = {x: STATE.snake[0].x + STATE.dir.x, y: STATE.snake[0].y + STATE.dir.y};
-
-  // Выход за пределы → появление с противоположной стороны
   head.x = (head.x + STATE.cols) % STATE.cols;
   head.y = (head.y + STATE.rows) % STATE.rows;
 
-  // Столкновение с собой
   if(STATE.snake.some(s=>s.x===head.x && s.y===head.y)){
     gameOver(); return;
   }
@@ -196,39 +227,39 @@ function step(){
     placeFood();
     beep(880, .08, 'sine');
     if(STATE.speed > 70) STATE.speed -= 3;
-    clearInterval(STATE.timer);
-    STATE.timer = setInterval(step, STATE.speed);
   } else {
     STATE.snake.pop();
   }
-  draw();
 }
 function gameOver(){
   STATE.running = false; STATE.gameOver = true;
-  clearInterval(STATE.timer);
+  if(STATE.animFrame) cancelAnimationFrame(STATE.animFrame);
   beep(120, .4, 'sawtooth');
   showOverlay('Игра окончена', `Счёт: ${STATE.score}. Нажмите «Старт» для новой игры`);
 }
 function startGame(){
   if(STATE.gameOver || !STATE.snake.length) resetGame();
   STATE.running = true; STATE.paused = false;
+  STATE.lastTime = 0; STATE.accumulator = 0;
   hideOverlay();
-  clearInterval(STATE.timer);
-  STATE.timer = setInterval(step, STATE.speed);
+  if(!STATE.animFrame) STATE.animFrame = requestAnimationFrame(gameLoop);
 }
 function togglePause(){
   if(!STATE.running){ startGame(); return; }
   STATE.paused = !STATE.paused;
   if(STATE.paused){
-    clearInterval(STATE.timer);
     showOverlay('Пауза', 'Нажмите ▶ для продолжения');
   } else {
     hideOverlay();
-    STATE.timer = setInterval(step, STATE.speed);
+    STATE.lastTime = 0;
+    if(!STATE.animFrame) STATE.animFrame = requestAnimationFrame(gameLoop);
   }
 }
 $('btn-start').onclick = startGame;
-$('btn-reset').onclick = () => { clearInterval(STATE.timer); STATE.running=false; resetGame(); showOverlay('Готовы?', 'Нажмите «Старт»'); };
+$('btn-reset').onclick = () => { 
+  if(STATE.animFrame) cancelAnimationFrame(STATE.animFrame);
+  STATE.running=false; resetGame(); showOverlay('Готовы?', 'Нажмите «Старт»'); 
+};
 $('btn-pause').onclick = togglePause;
 
 // ----- Оверлей -----
@@ -244,19 +275,16 @@ function draw(){
   const c = STATE.cell;
   ctx.fillStyle = getCSS('--grid'); ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  // Сетка
   ctx.strokeStyle = 'rgba(255,255,255,.03)';
   for(let i=0;i<=STATE.cols;i++){ctx.beginPath();ctx.moveTo(i*c,0);ctx.lineTo(i*c,canvas.height);ctx.stroke()}
   for(let i=0;i<=STATE.rows;i++){ctx.beginPath();ctx.moveTo(0,i*c);ctx.lineTo(canvas.width,i*c);ctx.stroke()}
 
-  // Еда (пульсация)
   const pulse = 1 + Math.sin(Date.now()/200)*.1;
   ctx.fillStyle = getCSS('--food');
   ctx.beginPath();
   ctx.arc(STATE.food.x*c+c/2, STATE.food.y*c+c/2, c/2*.7*pulse, 0, Math.PI*2);
   ctx.fill();
 
-  // Змейка
   STATE.snake.forEach((s,i)=>{
     const alpha = 1 - i/STATE.snake.length*.5;
     ctx.fillStyle = i===0 ? getCSS('--accent') : getCSS('--snake');
@@ -266,7 +294,6 @@ function draw(){
   });
   ctx.globalAlpha = 1;
 
-  // Глаза у головы
   if(STATE.snake.length){
     const h = STATE.snake[0];
     ctx.fillStyle = '#0f172a';
@@ -275,8 +302,6 @@ function draw(){
     ctx.beginPath(); ctx.arc(ex-STATE.dir.y*3, ey+STATE.dir.x*3, 2, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(ex+STATE.dir.y*3, ey-STATE.dir.x*3, 2, 0, Math.PI*2); ctx.fill();
   }
-
-  if(STATE.running && !STATE.paused) requestAnimationFrame(draw);
 }
 function roundRect(x,y,w,h,r){
   ctx.beginPath();
@@ -289,10 +314,7 @@ function roundRect(x,y,w,h,r){
 }
 function getCSS(v){ return getComputedStyle(document.body).getPropertyValue(v).trim(); }
 
-// Анимация еды в покое
-setInterval(()=>{ if(!STATE.running) draw(); }, 80);
-
-// ----- Управление: клавиатура -----
+// ----- Клавиатура (мгновенный отклик) -----
 document.addEventListener('keydown', e => {
   const k = e.key;
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(k)) e.preventDefault();
@@ -300,40 +322,209 @@ document.addEventListener('keydown', e => {
   const map = {
     ArrowUp:{x:0,y:-1}, ArrowDown:{x:0,y:1},
     ArrowLeft:{x:-1,y:0}, ArrowRight:{x:1,y:0},
-    w:{x:0,y:-1}, s:{x:0,y:1}, a:{x:-1,y:0}, d:{x:1,y:0}
+    w:{x:0,y:-1}, s:{x:0,y:1}, a:{x:-1,y:0}, d:{x:1,y:0},
+    W:{x:0,y:-1}, S:{x:0,y:1}, A:{x:-1,y:0}, D:{x:1,y:0}
   };
-  if(map[k]){
-    const d = map[k];
-    if(d.x !== -STATE.dir.x || d.y !== -STATE.dir.y) STATE.nextDir = d;
-  }
-});
+  if(map[k]) changeDirection(map[k]);
+}, {passive:false});
 
-// ----- Управление: свайпы -----
+// ----- Свайпы -----
 let touchStart = null;
 canvas.addEventListener('touchstart', e=>{
-  touchStart = {x:e.touches[0].clientX, y:e.touches[0].clientY};
+  if(STATE.controlScheme === 'swipe' || STATE.controlScheme === 'hybrid'){
+    touchStart = {x:e.touches[0].clientX, y:e.touches[0].clientY};
+  }
 }, {passive:true});
 canvas.addEventListener('touchend', e=>{
   if(!touchStart) return;
+  if(STATE.controlScheme !== 'swipe' && STATE.controlScheme !== 'hybrid') return;
   const dx = e.changedTouches[0].clientX - touchStart.x;
   const dy = e.changedTouches[0].clientY - touchStart.y;
   if(Math.abs(dx) < 20 && Math.abs(dy) < 20) return;
   let d;
   if(Math.abs(dx) > Math.abs(dy)) d = dx>0 ? {x:1,y:0} : {x:-1,y:0};
   else d = dy>0 ? {x:0,y:1} : {x:0,y:-1};
-  if(d.x !== -STATE.dir.x || d.y !== -STATE.dir.y) STATE.nextDir = d;
+  changeDirection(d);
   touchStart = null;
 });
 
-// ----- Кнопки направления -----
-document.querySelectorAll('.touchpad button').forEach(b=>{
-  b.onclick = () => {
-    const dir = b.dataset.dir;
-    const map = {up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0}};
-    const d = map[dir];
-    if(d.x !== -STATE.dir.x || d.y !== -STATE.dir.y) STATE.nextDir = d;
+// ----- Применение схемы управления -----
+function applyControlScheme(){
+  // Удалить старые элементы
+  document.querySelectorAll('.controls-layer').forEach(el=>el.remove());
+  
+  const layer = document.createElement('div');
+  layer.className = 'controls-layer active';
+  layer.id = 'controls-layer';
+  
+  const scheme = STATE.controlScheme;
+  
+  if(scheme === 'dpad' || scheme === 'hybrid'){
+    const dpad = document.createElement('div');
+    dpad.className = 'dpad';
+    dpad.innerHTML = `
+      <button class="up" data-dir="up">▲</button>
+      <button class="left" data-dir="left">◀</button>
+      <button class="right" data-dir="right">▶</button>
+      <button class="down" data-dir="down">▼</button>
+    `;
+    layer.appendChild(dpad);
+  }
+  
+  if(scheme === 'joystick'){
+    const zone = document.createElement('div');
+    zone.className = 'joystick-zone';
+    zone.innerHTML = '<div class="joystick-knob"></div>';
+    layer.appendChild(zone);
+    initJoystick(zone);
+  }
+  
+  if(scheme === 'tapzones'){
+    const zones = document.createElement('div');
+    zones.className = 'tap-zones';
+    zones.innerHTML = `
+      <div class="top" data-dir="up">▲</div>
+      <div class="left" data-dir="left">◀</div>
+      <div class="right" data-dir="right">▶</div>
+      <div class="bottom" data-dir="down">▼</div>
+    `;
+    layer.appendChild(zones);
+  }
+  
+  if(scheme === 'turns'){
+    const btns = document.createElement('div');
+    btns.className = 'turn-btns';
+    btns.innerHTML = `
+      <button data-turn="left">◀</button>
+      <button data-turn="right">▶</button>
+    `;
+    layer.appendChild(btns);
+  }
+  
+  document.querySelector('.stage').appendChild(layer);
+  
+  // Обработчики для всех кнопок
+  layer.querySelectorAll('[data-dir]').forEach(btn=>{
+    btn.addEventListener('touchstart', e=>{
+      e.preventDefault();
+      const dir = btn.dataset.dir;
+      const map = {up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0}};
+      changeDirection(map[dir]);
+    }, {passive:false});
+    btn.addEventListener('mousedown', e=>{
+      e.preventDefault();
+      const dir = btn.dataset.dir;
+      const map = {up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0}};
+      changeDirection(map[dir]);
+    });
+  });
+  
+  layer.querySelectorAll('[data-turn]').forEach(btn=>{
+    btn.addEventListener('touchstart', e=>{
+      e.preventDefault();
+      const turn = btn.dataset.turn;
+      if(turn === 'left'){
+        const d = STATE.dir.x === 0 ? {x:STATE.dir.y,y:0} : {x:0,y:-STATE.dir.x};
+        changeDirection(d);
+      } else {
+        const d = STATE.dir.x === 0 ? {x:-STATE.dir.y,y:0} : {x:0,y:STATE.dir.x};
+        changeDirection(d);
+      }
+    }, {passive:false});
+    btn.addEventListener('mousedown', e=>{
+      e.preventDefault();
+      const turn = btn.dataset.turn;
+      if(turn === 'left'){
+        const d = STATE.dir.x === 0 ? {x:STATE.dir.y,y:0} : {x:0,y:-STATE.dir.x};
+        changeDirection(d);
+      } else {
+        const d = STATE.dir.x === 0 ? {x:-STATE.dir.y,y:0} : {x:0,y:STATE.dir.x};
+        changeDirection(d);
+      }
+    });
+  });
+}
+
+// ----- Джойстик -----
+function initJoystick(zone){
+  const knob = zone.querySelector('.joystick-knob');
+  let active = false, startX, startY;
+  const maxDist = 45;
+  
+  zone.addEventListener('touchstart', e=>{
+    e.preventDefault();
+    active = true;
+    const rect = zone.getBoundingClientRect();
+    startX = rect.left + rect.width/2;
+    startY = rect.top + rect.height/2;
+  }, {passive:false});
+  
+  zone.addEventListener('touchmove', e=>{
+    if(!active) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    let dx = touch.clientX - startX;
+    let dy = touch.clientY - startY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if(dist > maxDist){
+      dx = dx/dist*maxDist;
+      dy = dy/dist*maxDist;
+    }
+    knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    
+    if(dist > 20){
+      if(Math.abs(dx) > Math.abs(dy)){
+        changeDirection(dx > 0 ? {x:1,y:0} : {x:-1,y:0});
+      } else {
+        changeDirection(dy > 0 ? {x:0,y:1} : {x:0,y:-1});
+      }
+    }
+  }, {passive:false});
+  
+  zone.addEventListener('touchend', e=>{
+    active = false;
+    knob.style.transform = 'translate(-50%, -50%)';
+  });
+}
+
+// ----- Меню настроек -----
+$('btn-menu').onclick = () => {
+  const modal = document.createElement('div');
+  modal.className = 'settings-modal';
+  modal.innerHTML = `
+    <div class="settings-box">
+      <h2>⚙ Настройки</h2>
+      <div class="setting-group">
+        <label>Схема управления (мобильная)</label>
+        <select id="sel-control">
+          <option value="dpad">1. D-Pad (крестовина)</option>
+          <option value="swipe">2. Свайпы по полю</option>
+          <option value="joystick">3. Виртуальный джойстик</option>
+          <option value="tapzones">4. Тап-зоны экрана</option>
+          <option value="turns">5. Повороты ◀ ▶</option>
+          <option value="hybrid">6. Гибрид (свайпы + D-Pad)</option>
+        </select>
+      </div>
+      <div class="settings-actions">
+        <button class="btn" id="btn-settings-close">Закрыть</button>
+        <button class="btn primary" id="btn-settings-save">Сохранить</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  
+  const sel = modal.querySelector('#sel-control');
+  sel.value = STATE.controlScheme;
+  
+  modal.querySelector('#btn-settings-close').onclick = () => modal.remove();
+  modal.querySelector('#btn-settings-save').onclick = () => {
+    STATE.controlScheme = sel.value;
+    saveAll();
+    applyControlScheme();
+    modal.remove();
   };
-});
+  modal.onclick = e => { if(e.target === modal) modal.remove(); };
+};
 
 // ----- Старт -----
 loadAll();
@@ -342,6 +533,9 @@ if(!Object.keys(STATE.profiles).length){
   saveAll(); renderProfiles();
 }
 resetGame();
+
+// Анимация еды в покое
+setInterval(()=>{ if(!STATE.running) draw(); }, 80);
 
 // ----- Service Worker -----
 if('serviceWorker' in navigator){
