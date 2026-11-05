@@ -12,7 +12,9 @@ const STATE = {
   speed:140, lastTime:0, accumulator:0,
   sound:true, theme:'dark',
   profile:'Игрок 1', profiles:{},
-  controlScheme:'dpad', // dpad, swipe, joystick, tapzones, turns, hybrid
+  controlScheme:'dpad',
+  joystickSide:'left',
+  history:[],
   animFrame:null
 };
 
@@ -44,7 +46,9 @@ function saveAll(){
     currentProfile: STATE.profile,
     theme: STATE.theme,
     sound: STATE.sound,
-    controlScheme: STATE.controlScheme
+    controlScheme: STATE.controlScheme,
+    joystickSide: STATE.joystickSide,
+    history: STATE.history
   };
   localStorage.setItem('snake_save', JSON.stringify(data));
 }
@@ -58,6 +62,8 @@ function loadAll(){
     STATE.theme = d.theme || 'dark';
     STATE.sound = d.sound !== false;
     STATE.controlScheme = d.controlScheme || 'dpad';
+    STATE.joystickSide = d.joystickSide || 'left';
+    STATE.history = d.history || [];
     document.body.dataset.theme = STATE.theme;
     $('theme').value = STATE.theme;
     $('btn-sound').textContent = STATE.sound ? '🔊' : '🔇';
@@ -94,7 +100,11 @@ function renderProfiles(){
 
 // ----- Экспорт / Импорт -----
 $('btn-export').onclick = () => {
-  const blob = new Blob([JSON.stringify(STATE.profiles, null, 2)], {type:'application/json'});
+  const data = {
+    profiles: STATE.profiles,
+    history: STATE.history
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `snake-save-${Date.now()}.json`;
@@ -108,7 +118,8 @@ $('file-import').onchange = e => {
   r.onload = () => {
     try{
       const data = JSON.parse(r.result);
-      STATE.profiles = data;
+      if(data.profiles) STATE.profiles = data.profiles;
+      if(data.history) STATE.history = data.history;
       saveAll(); renderProfiles(); loadProfile();
       showOverlay('Импорт ✓', 'Данные загружены');
       setTimeout(hideOverlay, 1500);
@@ -163,10 +174,9 @@ $('btn-sound').onclick = () => {
 
 // ----- Мгновенная смена направления -----
 function changeDirection(newDir){
-  // Запрет разворота на 180°
   if(newDir.x === -STATE.dir.x && newDir.y === -STATE.dir.y) return;
   STATE.nextDir = newDir;
-  STATE.dir = newDir; // Мгновенное применение!
+  STATE.dir = newDir;
 }
 
 // ----- Игровой цикл на RAF -----
@@ -235,8 +245,57 @@ function gameOver(){
   STATE.running = false; STATE.gameOver = true;
   if(STATE.animFrame) cancelAnimationFrame(STATE.animFrame);
   beep(120, .4, 'sawtooth');
-  showOverlay('Игра окончена', `Счёт: ${STATE.score}. Нажмите «Старт» для новой игры`);
+  
+  // Сохранить результат в историю
+  const result = {
+    profile: STATE.profile,
+    score: STATE.score,
+    date: new Date().toISOString(),
+    timestamp: Date.now()
+  };
+  STATE.history.unshift(result);
+  if(STATE.history.length > 50) STATE.history = STATE.history.slice(0, 50);
+  saveAll();
+  
+  showGameOverDialog();
 }
+
+function showGameOverDialog(){
+  const modal = document.createElement('div');
+  modal.className = 'settings-modal';
+  modal.innerHTML = `
+    <div class="settings-box">
+      <h2>🎮 Игра окончена!</h2>
+      <p style="margin:1rem 0; font-size:1.2rem">Ваш счёт: <b style="color:var(--accent)">${STATE.score}</b></p>
+      <div class="setting-group">
+        <label>Сохранить результат для игрока:</label>
+        <input type="text" id="save-name" value="${STATE.profile}" />
+      </div>
+      <div class="settings-actions">
+        <button class="btn" id="btn-gameover-close">Закрыть</button>
+        <button class="btn primary" id="btn-gameover-save">Сохранить и начать заново</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  
+  modal.querySelector('#btn-gameover-close').onclick = () => {
+    modal.remove();
+    showOverlay('Игра окончена', 'Нажмите «Старт» для новой игры');
+  };
+  modal.querySelector('#btn-gameover-save').onclick = () => {
+    const name = modal.querySelector('#save-name').value.trim();
+    if(name && name !== STATE.profile){
+      if(!STATE.profiles[name]) STATE.profiles[name] = {best:0};
+      STATE.profile = name;
+      saveAll(); renderProfiles(); loadProfile();
+    }
+    modal.remove();
+    resetGame();
+    startGame();
+  };
+}
+
 function startGame(){
   if(STATE.gameOver || !STATE.snake.length) resetGame();
   STATE.running = true; STATE.paused = false;
@@ -314,7 +373,7 @@ function roundRect(x,y,w,h,r){
 }
 function getCSS(v){ return getComputedStyle(document.body).getPropertyValue(v).trim(); }
 
-// ----- Клавиатура (мгновенный отклик) -----
+// ----- Клавиатура -----
 document.addEventListener('keydown', e => {
   const k = e.key;
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(k)) e.preventDefault();
@@ -350,12 +409,10 @@ canvas.addEventListener('touchend', e=>{
 
 // ----- Применение схемы управления -----
 function applyControlScheme(){
-  // Удалить старые элементы
-  document.querySelectorAll('.controls-layer').forEach(el=>el.remove());
+  const bottom = $('controls-bottom');
+  bottom.innerHTML = '';
   
-  const layer = document.createElement('div');
-  layer.className = 'controls-layer active';
-  layer.id = 'controls-layer';
+  document.querySelectorAll('.tap-zones-overlay').forEach(el=>el.remove());
   
   const scheme = STATE.controlScheme;
   
@@ -368,27 +425,30 @@ function applyControlScheme(){
       <button class="right" data-dir="right">▶</button>
       <button class="down" data-dir="down">▼</button>
     `;
-    layer.appendChild(dpad);
+    bottom.appendChild(dpad);
   }
   
   if(scheme === 'joystick'){
     const zone = document.createElement('div');
     zone.className = 'joystick-zone';
     zone.innerHTML = '<div class="joystick-knob"></div>';
-    layer.appendChild(zone);
+    if(STATE.joystickSide === 'right'){
+      zone.style.marginLeft = 'auto';
+    }
+    bottom.appendChild(zone);
     initJoystick(zone);
   }
   
   if(scheme === 'tapzones'){
     const zones = document.createElement('div');
-    zones.className = 'tap-zones';
+    zones.className = 'tap-zones-overlay active';
     zones.innerHTML = `
       <div class="top" data-dir="up">▲</div>
       <div class="left" data-dir="left">◀</div>
       <div class="right" data-dir="right">▶</div>
       <div class="bottom" data-dir="down">▼</div>
     `;
-    layer.appendChild(zones);
+    document.querySelector('.stage').appendChild(zones);
   }
   
   if(scheme === 'turns'){
@@ -398,29 +458,22 @@ function applyControlScheme(){
       <button data-turn="left">◀</button>
       <button data-turn="right">▶</button>
     `;
-    layer.appendChild(btns);
+    bottom.appendChild(btns);
   }
   
-  document.querySelector('.stage').appendChild(layer);
-  
-  // Обработчики для всех кнопок
-  layer.querySelectorAll('[data-dir]').forEach(btn=>{
-    btn.addEventListener('touchstart', e=>{
+  document.querySelectorAll('[data-dir]').forEach(btn=>{
+    const handler = e => {
       e.preventDefault();
       const dir = btn.dataset.dir;
       const map = {up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0}};
       changeDirection(map[dir]);
-    }, {passive:false});
-    btn.addEventListener('mousedown', e=>{
-      e.preventDefault();
-      const dir = btn.dataset.dir;
-      const map = {up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0}};
-      changeDirection(map[dir]);
-    });
+    };
+    btn.addEventListener('touchstart', handler, {passive:false});
+    btn.addEventListener('mousedown', handler);
   });
   
-  layer.querySelectorAll('[data-turn]').forEach(btn=>{
-    btn.addEventListener('touchstart', e=>{
+  document.querySelectorAll('[data-turn]').forEach(btn=>{
+    const handler = e => {
       e.preventDefault();
       const turn = btn.dataset.turn;
       if(turn === 'left'){
@@ -430,18 +483,9 @@ function applyControlScheme(){
         const d = STATE.dir.x === 0 ? {x:-STATE.dir.y,y:0} : {x:0,y:STATE.dir.x};
         changeDirection(d);
       }
-    }, {passive:false});
-    btn.addEventListener('mousedown', e=>{
-      e.preventDefault();
-      const turn = btn.dataset.turn;
-      if(turn === 'left'){
-        const d = STATE.dir.x === 0 ? {x:STATE.dir.y,y:0} : {x:0,y:-STATE.dir.x};
-        changeDirection(d);
-      } else {
-        const d = STATE.dir.x === 0 ? {x:-STATE.dir.y,y:0} : {x:0,y:STATE.dir.x};
-        changeDirection(d);
-      }
-    });
+    };
+    btn.addEventListener('touchstart', handler, {passive:false});
+    btn.addEventListener('mousedown', handler);
   });
 }
 
@@ -485,17 +529,74 @@ function initJoystick(zone){
     active = false;
     knob.style.transform = 'translate(-50%, -50%)';
   });
+  
+  zone.addEventListener('mousedown', e=>{
+    e.preventDefault();
+    active = true;
+    const rect = zone.getBoundingClientRect();
+    startX = rect.left + rect.width/2;
+    startY = rect.top + rect.height/2;
+    
+    const moveHandler = e => {
+      if(!active) return;
+      let dx = e.clientX - startX;
+      let dy = e.clientY - startY;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if(dist > maxDist){
+        dx = dx/dist*maxDist;
+        dy = dy/dist*maxDist;
+      }
+      knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+      
+      if(dist > 20){
+        if(Math.abs(dx) > Math.abs(dy)){
+          changeDirection(dx > 0 ? {x:1,y:0} : {x:-1,y:0});
+        } else {
+          changeDirection(dy > 0 ? {x:0,y:1} : {x:0,y:-1});
+        }
+      }
+    };
+    
+    const upHandler = () => {
+      active = false;
+      knob.style.transform = 'translate(-50%, -50%)';
+      document.removeEventListener('mousemove', moveHandler);
+      document.removeEventListener('mouseup', upHandler);
+    };
+    
+    document.addEventListener('mousemove', moveHandler);
+    document.addEventListener('mouseup', upHandler);
+  });
 }
 
 // ----- Меню настроек -----
 $('btn-menu').onclick = () => {
   const modal = document.createElement('div');
   modal.className = 'settings-modal';
+  
+  let historyHTML = '';
+  if(STATE.history.length > 0){
+    historyHTML = '<div class="history-list">';
+    STATE.history.slice(0, 10).forEach(h => {
+      const date = new Date(h.date);
+      const dateStr = date.toLocaleDateString('ru-RU');
+      const timeStr = date.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+      historyHTML += `
+        <div class="history-item">
+          <span>${h.profile}</span>
+          <span class="date">${dateStr} ${timeStr}</span>
+          <span class="score">${h.score}</span>
+        </div>
+      `;
+    });
+    historyHTML += '</div>';
+  }
+  
   modal.innerHTML = `
     <div class="settings-box">
       <h2>⚙ Настройки</h2>
       <div class="setting-group">
-        <label>Схема управления (мобильная)</label>
+        <label>Схема управления</label>
         <select id="sel-control">
           <option value="dpad">1. D-Pad (крестовина)</option>
           <option value="swipe">2. Свайпы по полю</option>
@@ -505,6 +606,19 @@ $('btn-menu').onclick = () => {
           <option value="hybrid">6. Гибрид (свайпы + D-Pad)</option>
         </select>
       </div>
+      <div class="setting-group">
+        <label>Позиция джойстика</label>
+        <select id="sel-joystick-side">
+          <option value="left">Слева</option>
+          <option value="right">Справа</option>
+        </select>
+      </div>
+      ${STATE.history.length > 0 ? `
+        <div class="setting-group">
+          <label>Последние результаты (топ-10)</label>
+          ${historyHTML}
+        </div>
+      ` : ''}
       <div class="settings-actions">
         <button class="btn" id="btn-settings-close">Закрыть</button>
         <button class="btn primary" id="btn-settings-save">Сохранить</button>
@@ -513,12 +627,15 @@ $('btn-menu').onclick = () => {
   `;
   document.body.appendChild(modal);
   
-  const sel = modal.querySelector('#sel-control');
-  sel.value = STATE.controlScheme;
+  const selControl = modal.querySelector('#sel-control');
+  const selSide = modal.querySelector('#sel-joystick-side');
+  selControl.value = STATE.controlScheme;
+  selSide.value = STATE.joystickSide;
   
   modal.querySelector('#btn-settings-close').onclick = () => modal.remove();
   modal.querySelector('#btn-settings-save').onclick = () => {
-    STATE.controlScheme = sel.value;
+    STATE.controlScheme = selControl.value;
+    STATE.joystickSide = selSide.value;
     saveAll();
     applyControlScheme();
     modal.remove();
@@ -534,10 +651,8 @@ if(!Object.keys(STATE.profiles).length){
 }
 resetGame();
 
-// Анимация еды в покое
 setInterval(()=>{ if(!STATE.running) draw(); }, 80);
 
-// ----- Service Worker -----
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
