@@ -1,7 +1,22 @@
-/* ========== Змейка · SKLN 2026 · v1.0 · OPTIMIZED ========== */
+/* ========== Змейка · SKLN 2026 · v1.0 · PERFORMANCE ========== */
 
 const $ = id => document.getElementById(id);
-const canvas = $('game'), ctx = canvas.getContext('2d');
+
+// КРИТИЧНО: desynchronized: true снижает input lag до минимума
+const canvas = $('game');
+const ctx = canvas.getContext('2d', { desynchronized: true, alpha: false });
+
+// ----- Кэш CSS-переменных (НЕ читать из DOM каждый кадр!) -----
+const COLORS = { bg:'', fg:'', grid:'', snake:'', food:'', accent:'' };
+function refreshColors(){
+  const s = getComputedStyle(document.body);
+  COLORS.bg = s.getPropertyValue('--bg').trim();
+  COLORS.fg = s.getPropertyValue('--fg').trim();
+  COLORS.grid = s.getPropertyValue('--grid').trim();
+  COLORS.snake = s.getPropertyValue('--snake').trim();
+  COLORS.food = s.getPropertyValue('--food').trim();
+  COLORS.accent = s.getPropertyValue('--accent').trim();
+}
 
 // ----- Состояние -----
 const STATE = {
@@ -15,18 +30,21 @@ const STATE = {
   controlScheme:'dpad',
   joystickSide:'left',
   history:[],
-  animFrame:null
+  animFrame:null,
+  idleTimer:null,
+  dirty:true // флаг необходимости перерисовки
 };
 
 // ----- Заставка -----
 setTimeout(() => {
-  $('splash').classList.add('hidden');
+  $('splash').classList.add('done');
   $('app').classList.remove('hidden');
+  refreshColors();
   resizeCanvas();
   showOverlay('Готовы?', 'Нажмите «Старт» или пробел');
 }, 10000);
 
-// ----- Canvas: адаптивный размер -----
+// ----- Canvas -----
 function resizeCanvas(){
   const stage = document.querySelector('.stage');
   const maxW = stage.clientWidth - 16;
@@ -35,9 +53,21 @@ function resizeCanvas(){
   STATE.cell = cell;
   canvas.width = cell * STATE.cols;
   canvas.height = cell * STATE.rows;
-  draw();
+  STATE.dirty = true;
+  scheduleIdleDraw();
 }
 window.addEventListener('resize', resizeCanvas);
+
+// ----- Idle-отрисовка (редкая, 10 FPS) -----
+function scheduleIdleDraw(){
+  if(STATE.idleTimer) clearInterval(STATE.idleTimer);
+  STATE.idleTimer = setInterval(()=>{
+    if(!STATE.running && STATE.dirty){
+      draw();
+      STATE.dirty = false;
+    }
+  }, 100);
+}
 
 // ----- Сохранение / загрузка -----
 function saveAll(){
@@ -50,7 +80,7 @@ function saveAll(){
     joystickSide: STATE.joystickSide,
     history: STATE.history
   };
-  localStorage.setItem('snake_save', JSON.stringify(data));
+  try{ localStorage.setItem('snake_save', JSON.stringify(data)); }catch(e){}
 }
 function loadAll(){
   try{
@@ -67,13 +97,14 @@ function loadAll(){
     document.body.dataset.theme = STATE.theme;
     $('theme').value = STATE.theme;
     $('btn-sound').textContent = STATE.sound ? '🔊' : '🔇';
+    refreshColors();
     loadProfile();
     renderProfiles();
     applyControlScheme();
   }catch(e){console.warn('load fail',e)}
 }
 function loadProfile(){
-  const p = STATE.profiles[STATE.profile] || {best:0, score:0};
+  const p = STATE.profiles[STATE.profile] || {best:0};
   STATE.best = p.best || 0;
   STATE.score = 0;
   $('best').textContent = STATE.best;
@@ -100,15 +131,13 @@ function renderProfiles(){
 
 // ----- Экспорт / Импорт -----
 $('btn-export').onclick = () => {
-  const data = {
-    profiles: STATE.profiles,
-    history: STATE.history
-  };
+  const data = { profiles: STATE.profiles, history: STATE.history };
   const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `snake-save-${Date.now()}.json`;
   a.click();
+  URL.revokeObjectURL(a.href);
   beep(880, .1);
 };
 $('btn-import').onclick = () => $('file-import').click();
@@ -127,13 +156,14 @@ $('file-import').onchange = e => {
     }catch(err){ alert('Ошибка файла'); }
   };
   r.readAsText(f);
+  e.target.value = ''; // сброс для повторного импорта
 };
 
 // ----- Профили -----
 $('profile').onchange = e => {
   if(e.target.value === '__new__'){
     const name = prompt('Имя профиля:', 'Игрок '+(Object.keys(STATE.profiles).length+1));
-    if(!name) return;
+    if(!name){ renderProfiles(); return; }
     STATE.profiles[name] = {best:0};
     STATE.profile = name;
     saveAll(); renderProfiles(); loadProfile();
@@ -148,7 +178,10 @@ $('profile').onchange = e => {
 $('theme').onchange = e => {
   STATE.theme = e.target.value;
   document.body.dataset.theme = STATE.theme;
-  saveAll(); draw();
+  refreshColors(); // обновить кэш цветов
+  saveAll();
+  STATE.dirty = true;
+  draw();
 };
 
 // ----- Звук -----
@@ -156,7 +189,8 @@ let audioCtx;
 function beep(freq=440, dur=.1, type='square'){
   if(!STATE.sound) return;
   try{
-    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state === 'suspended') audioCtx.resume();
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
     o.type = type; o.frequency.value = freq;
     g.gain.value = .08;
@@ -175,11 +209,11 @@ $('btn-sound').onclick = () => {
 // ----- Мгновенная смена направления -----
 function changeDirection(newDir){
   if(newDir.x === -STATE.dir.x && newDir.y === -STATE.dir.y) return;
-  STATE.nextDir = newDir;
   STATE.dir = newDir;
+  STATE.nextDir = newDir;
 }
 
-// ----- Игровой цикл на RAF -----
+// ----- Игровой цикл -----
 function gameLoop(timestamp){
   if(!STATE.running || STATE.paused){
     STATE.animFrame = null;
@@ -191,10 +225,14 @@ function gameLoop(timestamp){
   STATE.lastTime = timestamp;
   STATE.accumulator += delta;
   
-  while(STATE.accumulator >= STATE.speed){
+  // Ограничим максимум 5 шагов за кадр, чтобы не было "телепортов"
+  let steps = 0;
+  while(STATE.accumulator >= STATE.speed && steps < 5){
     step();
     STATE.accumulator -= STATE.speed;
+    steps++;
   }
+  if(STATE.accumulator > STATE.speed * 5) STATE.accumulator = 0;
   
   draw();
   STATE.animFrame = requestAnimationFrame(gameLoop);
@@ -207,26 +245,33 @@ function resetGame(){
   STATE.gameOver = false; STATE.paused = false;
   STATE.accumulator = 0; STATE.lastTime = 0;
   $('score').textContent = 0;
-  placeFood(); draw();
+  placeFood();
+  STATE.dirty = true;
+  draw();
 }
 function placeFood(){
-  while(true){
-    const f = {x: Math.floor(Math.random()*STATE.cols), y: Math.floor(Math.random()*STATE.rows)};
-    if(!STATE.snake.some(s=>s.x===f.x && s.y===f.y)){ STATE.food = f; return; }
-  }
+  const occupied = new Set(STATE.snake.map(s => s.x + ',' + s.y));
+  let f;
+  do {
+    f = {x: Math.floor(Math.random()*STATE.cols), y: Math.floor(Math.random()*STATE.rows)};
+  } while(occupied.has(f.x + ',' + f.y));
+  STATE.food = f;
 }
 function step(){
   const head = {x: STATE.snake[0].x + STATE.dir.x, y: STATE.snake[0].y + STATE.dir.y};
   head.x = (head.x + STATE.cols) % STATE.cols;
   head.y = (head.y + STATE.rows) % STATE.rows;
 
-  if(STATE.snake.some(s=>s.x===head.x && s.y===head.y)){
-    gameOver(); return;
+  // Оптимизированная проверка столкновения
+  for(let i = 0; i < STATE.snake.length; i++){
+    if(STATE.snake[i].x === head.x && STATE.snake[i].y === head.y){
+      gameOver(); return;
+    }
   }
 
   STATE.snake.unshift(head);
 
-  if(head.x===STATE.food.x && head.y===STATE.food.y){
+  if(head.x === STATE.food.x && head.y === STATE.food.y){
     STATE.score++;
     $('score').textContent = STATE.score;
     if(STATE.score > STATE.best){
@@ -243,10 +288,9 @@ function step(){
 }
 function gameOver(){
   STATE.running = false; STATE.gameOver = true;
-  if(STATE.animFrame) cancelAnimationFrame(STATE.animFrame);
+  if(STATE.animFrame){ cancelAnimationFrame(STATE.animFrame); STATE.animFrame = null; }
   beep(120, .4, 'sawtooth');
   
-  // Сохранить результат в историю
   const result = {
     profile: STATE.profile,
     score: STATE.score,
@@ -254,7 +298,7 @@ function gameOver(){
     timestamp: Date.now()
   };
   STATE.history.unshift(result);
-  if(STATE.history.length > 50) STATE.history = STATE.history.slice(0, 50);
+  if(STATE.history.length > 50) STATE.history.length = 50;
   saveAll();
   
   showGameOverDialog();
@@ -282,11 +326,16 @@ function showGameOverDialog(){
   modal.querySelector('#btn-gameover-close').onclick = () => {
     modal.remove();
     showOverlay('Игра окончена', 'Нажмите «Старт» для новой игры');
+    STATE.dirty = true;
+    scheduleIdleDraw();
   };
   modal.querySelector('#btn-gameover-save').onclick = () => {
     const name = modal.querySelector('#save-name').value.trim();
     if(name && name !== STATE.profile){
       if(!STATE.profiles[name]) STATE.profiles[name] = {best:0};
+      if(STATE.score > (STATE.profiles[name].best || 0)){
+        STATE.profiles[name].best = STATE.score;
+      }
       STATE.profile = name;
       saveAll(); renderProfiles(); loadProfile();
     }
@@ -300,6 +349,7 @@ function startGame(){
   if(STATE.gameOver || !STATE.snake.length) resetGame();
   STATE.running = true; STATE.paused = false;
   STATE.lastTime = 0; STATE.accumulator = 0;
+  if(STATE.idleTimer){ clearInterval(STATE.idleTimer); STATE.idleTimer = null; }
   hideOverlay();
   if(!STATE.animFrame) STATE.animFrame = requestAnimationFrame(gameLoop);
 }
@@ -308,6 +358,8 @@ function togglePause(){
   STATE.paused = !STATE.paused;
   if(STATE.paused){
     showOverlay('Пауза', 'Нажмите ▶ для продолжения');
+    STATE.dirty = true;
+    scheduleIdleDraw();
   } else {
     hideOverlay();
     STATE.lastTime = 0;
@@ -316,8 +368,11 @@ function togglePause(){
 }
 $('btn-start').onclick = startGame;
 $('btn-reset').onclick = () => { 
-  if(STATE.animFrame) cancelAnimationFrame(STATE.animFrame);
-  STATE.running=false; resetGame(); showOverlay('Готовы?', 'Нажмите «Старт»'); 
+  if(STATE.animFrame){ cancelAnimationFrame(STATE.animFrame); STATE.animFrame = null; }
+  STATE.running = false;
+  resetGame();
+  showOverlay('Готовы?', 'Нажмите «Старт»');
+  scheduleIdleDraw();
 };
 $('btn-pause').onclick = togglePause;
 
@@ -329,55 +384,82 @@ function showOverlay(t, p){
 }
 function hideOverlay(){ $('overlay').classList.add('hidden'); }
 
-// ----- Отрисовка -----
+// ----- Отрисовка (оптимизированная) -----
 function draw(){
   const c = STATE.cell;
-  ctx.fillStyle = getCSS('--grid'); ctx.fillRect(0,0,canvas.width,canvas.height);
+  const w = canvas.width, h = canvas.height;
+  
+  // Фон
+  ctx.fillStyle = COLORS.grid;
+  ctx.fillRect(0, 0, w, h);
 
-  ctx.strokeStyle = 'rgba(255,255,255,.03)';
-  for(let i=0;i<=STATE.cols;i++){ctx.beginPath();ctx.moveTo(i*c,0);ctx.lineTo(i*c,canvas.height);ctx.stroke()}
-  for(let i=0;i<=STATE.rows;i++){ctx.beginPath();ctx.moveTo(0,i*c);ctx.lineTo(canvas.width,i*c);ctx.stroke()}
-
-  const pulse = 1 + Math.sin(Date.now()/200)*.1;
-  ctx.fillStyle = getCSS('--food');
+  // Сетка (один проход)
+  ctx.strokeStyle = 'rgba(255,255,255,.04)';
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.arc(STATE.food.x*c+c/2, STATE.food.y*c+c/2, c/2*.7*pulse, 0, Math.PI*2);
+  for(let i = 0; i <= STATE.cols; i++){
+    const x = i * c + 0.5;
+    ctx.moveTo(x, 0); ctx.lineTo(x, h);
+  }
+  for(let i = 0; i <= STATE.rows; i++){
+    const y = i * c + 0.5;
+    ctx.moveTo(0, y); ctx.lineTo(w, y);
+  }
+  ctx.stroke();
+
+  // Еда (пульсация)
+  const pulse = 1 + Math.sin(Date.now() * 0.005) * 0.08;
+  ctx.fillStyle = COLORS.food;
+  ctx.beginPath();
+  ctx.arc(STATE.food.x * c + c/2, STATE.food.y * c + c/2, c * 0.35 * pulse, 0, Math.PI * 2);
   ctx.fill();
 
-  STATE.snake.forEach((s,i)=>{
-    const alpha = 1 - i/STATE.snake.length*.5;
-    ctx.fillStyle = i===0 ? getCSS('--accent') : getCSS('--snake');
-    ctx.globalAlpha = alpha;
-    roundRect(s.x*c+1, s.y*c+1, c-2, c-2, 4);
+  // Змейка (один путь для всех сегментов, кроме головы)
+  const snakeLen = STATE.snake.length;
+  if(snakeLen > 1){
+    ctx.fillStyle = COLORS.snake;
+    ctx.beginPath();
+    for(let i = 1; i < snakeLen; i++){
+      const s = STATE.snake[i];
+      const x = s.x * c + 1, y = s.y * c + 1, sz = c - 2;
+      ctx.moveTo(x + 3, y);
+      ctx.arcTo(x + sz, y, x + sz, y + sz, 3);
+      ctx.arcTo(x + sz, y + sz, x, y + sz, 3);
+      ctx.arcTo(x, y + sz, x, y, 3);
+      ctx.arcTo(x, y, x + sz, y, 3);
+    }
     ctx.fill();
-  });
-  ctx.globalAlpha = 1;
-
-  if(STATE.snake.length){
+  }
+  
+  // Голова (отдельно, другим цветом)
+  if(snakeLen > 0){
     const h = STATE.snake[0];
+    ctx.fillStyle = COLORS.accent;
+    const x = h.x * c + 1, y = h.y * c + 1, sz = c - 2;
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y);
+    ctx.arcTo(x + sz, y, x + sz, y + sz, 4);
+    ctx.arcTo(x + sz, y + sz, x, y + sz, 4);
+    ctx.arcTo(x, y + sz, x, y, 4);
+    ctx.arcTo(x, y, x + sz, y, 4);
+    ctx.fill();
+
+    // Глаза
     ctx.fillStyle = '#0f172a';
-    const ex = h.x*c + c/2 + STATE.dir.x*c*.2;
-    const ey = h.y*c + c/2 + STATE.dir.y*c*.2;
-    ctx.beginPath(); ctx.arc(ex-STATE.dir.y*3, ey+STATE.dir.x*3, 2, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(ex+STATE.dir.y*3, ey-STATE.dir.x*3, 2, 0, Math.PI*2); ctx.fill();
+    const ex = h.x * c + c/2 + STATE.dir.x * c * 0.2;
+    const ey = h.y * c + c/2 + STATE.dir.y * c * 0.2;
+    ctx.beginPath();
+    ctx.arc(ex - STATE.dir.y * 3, ey + STATE.dir.x * 3, 2, 0, Math.PI * 2);
+    ctx.arc(ex + STATE.dir.y * 3, ey - STATE.dir.x * 3, 2, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
-function roundRect(x,y,w,h,r){
-  ctx.beginPath();
-  ctx.moveTo(x+r,y);
-  ctx.arcTo(x+w,y,x+w,y+h,r);
-  ctx.arcTo(x+w,y+h,x,y+h,r);
-  ctx.arcTo(x,y+h,x,y,r);
-  ctx.arcTo(x,y,x+w,y,r);
-  ctx.closePath();
-}
-function getCSS(v){ return getComputedStyle(document.body).getPropertyValue(v).trim(); }
 
 // ----- Клавиатура -----
 document.addEventListener('keydown', e => {
   const k = e.key;
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(k)) e.preventDefault();
-  if(k===' '){ togglePause(); return; }
+  if(k === ' '){ togglePause(); return; }
   const map = {
     ArrowUp:{x:0,y:-1}, ArrowDown:{x:0,y:1},
     ArrowLeft:{x:-1,y:0}, ArrowRight:{x:1,y:0},
@@ -389,30 +471,76 @@ document.addEventListener('keydown', e => {
 
 // ----- Свайпы -----
 let touchStart = null;
-canvas.addEventListener('touchstart', e=>{
+canvas.addEventListener('touchstart', e => {
   if(STATE.controlScheme === 'swipe' || STATE.controlScheme === 'hybrid'){
-    touchStart = {x:e.touches[0].clientX, y:e.touches[0].clientY};
+    touchStart = {x: e.touches[0].clientX, y: e.touches[0].clientY};
   }
 }, {passive:true});
-canvas.addEventListener('touchend', e=>{
+canvas.addEventListener('touchend', e => {
   if(!touchStart) return;
   if(STATE.controlScheme !== 'swipe' && STATE.controlScheme !== 'hybrid') return;
   const dx = e.changedTouches[0].clientX - touchStart.x;
   const dy = e.changedTouches[0].clientY - touchStart.y;
-  if(Math.abs(dx) < 20 && Math.abs(dy) < 20) return;
+  if(Math.abs(dx) < 20 && Math.abs(dy) < 20){ touchStart = null; return; }
   let d;
-  if(Math.abs(dx) > Math.abs(dy)) d = dx>0 ? {x:1,y:0} : {x:-1,y:0};
-  else d = dy>0 ? {x:0,y:1} : {x:0,y:-1};
+  if(Math.abs(dx) > Math.abs(dy)) d = dx > 0 ? {x:1,y:0} : {x:-1,y:0};
+  else d = dy > 0 ? {x:0,y:1} : {x:0,y:-1};
   changeDirection(d);
   touchStart = null;
+}, {passive:true});
+
+// ----- EVENT DELEGATION (вместо навешивания на каждую кнопку) -----
+document.addEventListener('click', e => {
+  const dirBtn = e.target.closest('[data-dir]');
+  if(dirBtn){
+    e.preventDefault();
+    const map = {up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0}};
+    changeDirection(map[dirBtn.dataset.dir]);
+    return;
+  }
+  const turnBtn = e.target.closest('[data-turn]');
+  if(turnBtn){
+    e.preventDefault();
+    const turn = turnBtn.dataset.turn;
+    if(turn === 'left'){
+      const d = STATE.dir.x === 0 ? {x:STATE.dir.y,y:0} : {x:0,y:-STATE.dir.x};
+      changeDirection(d);
+    } else {
+      const d = STATE.dir.x === 0 ? {x:-STATE.dir.y,y:0} : {x:0,y:STATE.dir.x};
+      changeDirection(d);
+    }
+  }
 });
+
+// Для мгновенного отклика на мобильных — touchstart
+document.addEventListener('touchstart', e => {
+  const dirBtn = e.target.closest('[data-dir]');
+  if(dirBtn){
+    e.preventDefault();
+    const map = {up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0}};
+    changeDirection(map[dirBtn.dataset.dir]);
+    return;
+  }
+  const turnBtn = e.target.closest('[data-turn]');
+  if(turnBtn){
+    e.preventDefault();
+    const turn = turnBtn.dataset.turn;
+    if(turn === 'left'){
+      const d = STATE.dir.x === 0 ? {x:STATE.dir.y,y:0} : {x:0,y:-STATE.dir.x};
+      changeDirection(d);
+    } else {
+      const d = STATE.dir.x === 0 ? {x:-STATE.dir.y,y:0} : {x:0,y:STATE.dir.x};
+      changeDirection(d);
+    }
+  }
+}, {passive:false});
 
 // ----- Применение схемы управления -----
 function applyControlScheme(){
   const bottom = $('controls-bottom');
   bottom.innerHTML = '';
   
-  document.querySelectorAll('.tap-zones-overlay').forEach(el=>el.remove());
+  document.querySelectorAll('.tap-zones-overlay').forEach(el => el.remove());
   
   const scheme = STATE.controlScheme;
   
@@ -432,9 +560,7 @@ function applyControlScheme(){
     const zone = document.createElement('div');
     zone.className = 'joystick-zone';
     zone.innerHTML = '<div class="joystick-knob"></div>';
-    if(STATE.joystickSide === 'right'){
-      zone.style.marginLeft = 'auto';
-    }
+    if(STATE.joystickSide === 'right') zone.style.marginLeft = 'auto';
     bottom.appendChild(zone);
     initJoystick(zone);
   }
@@ -460,53 +586,15 @@ function applyControlScheme(){
     `;
     bottom.appendChild(btns);
   }
-  
-  document.querySelectorAll('[data-dir]').forEach(btn=>{
-    const handler = e => {
-      e.preventDefault();
-      const dir = btn.dataset.dir;
-      const map = {up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0}};
-      changeDirection(map[dir]);
-    };
-    btn.addEventListener('touchstart', handler, {passive:false});
-    btn.addEventListener('mousedown', handler);
-  });
-  
-  document.querySelectorAll('[data-turn]').forEach(btn=>{
-    const handler = e => {
-      e.preventDefault();
-      const turn = btn.dataset.turn;
-      if(turn === 'left'){
-        const d = STATE.dir.x === 0 ? {x:STATE.dir.y,y:0} : {x:0,y:-STATE.dir.x};
-        changeDirection(d);
-      } else {
-        const d = STATE.dir.x === 0 ? {x:-STATE.dir.y,y:0} : {x:0,y:STATE.dir.x};
-        changeDirection(d);
-      }
-    };
-    btn.addEventListener('touchstart', handler, {passive:false});
-    btn.addEventListener('mousedown', handler);
-  });
 }
 
 // ----- Джойстик -----
 function initJoystick(zone){
   const knob = zone.querySelector('.joystick-knob');
-  let active = false, startX, startY;
+  let active = false, startX, startY, lastDir = null;
   const maxDist = 45;
   
-  zone.addEventListener('touchstart', e=>{
-    e.preventDefault();
-    active = true;
-    const rect = zone.getBoundingClientRect();
-    startX = rect.left + rect.width/2;
-    startY = rect.top + rect.height/2;
-  }, {passive:false});
-  
-  zone.addEventListener('touchmove', e=>{
-    if(!active) return;
-    e.preventDefault();
-    const touch = e.touches[0];
+  function update(touch){
     let dx = touch.clientX - startX;
     let dy = touch.clientY - startY;
     const dist = Math.sqrt(dx*dx + dy*dy);
@@ -517,53 +605,56 @@ function initJoystick(zone){
     knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
     
     if(dist > 20){
+      let newDir;
       if(Math.abs(dx) > Math.abs(dy)){
-        changeDirection(dx > 0 ? {x:1,y:0} : {x:-1,y:0});
+        newDir = dx > 0 ? {x:1,y:0} : {x:-1,y:0};
       } else {
-        changeDirection(dy > 0 ? {x:0,y:1} : {x:0,y:-1});
+        newDir = dy > 0 ? {x:0,y:1} : {x:0,y:-1};
+      }
+      // Меняем направление только при изменении
+      if(!lastDir || lastDir.x !== newDir.x || lastDir.y !== newDir.y){
+        changeDirection(newDir);
+        lastDir = newDir;
       }
     }
-  }, {passive:false});
+  }
   
-  zone.addEventListener('touchend', e=>{
-    active = false;
-    knob.style.transform = 'translate(-50%, -50%)';
-  });
-  
-  zone.addEventListener('mousedown', e=>{
+  zone.addEventListener('touchstart', e => {
     e.preventDefault();
-    active = true;
+    active = true; lastDir = null;
     const rect = zone.getBoundingClientRect();
     startX = rect.left + rect.width/2;
     startY = rect.top + rect.height/2;
+    update(e.touches[0]);
+  }, {passive:false});
+  
+  zone.addEventListener('touchmove', e => {
+    if(!active) return;
+    e.preventDefault();
+    update(e.touches[0]);
+  }, {passive:false});
+  
+  zone.addEventListener('touchend', e => {
+    active = false; lastDir = null;
+    knob.style.transform = 'translate(-50%, -50%)';
+  });
+  
+  // Мышь
+  zone.addEventListener('mousedown', e => {
+    e.preventDefault();
+    active = true; lastDir = null;
+    const rect = zone.getBoundingClientRect();
+    startX = rect.left + rect.width/2;
+    startY = rect.top + rect.height/2;
+    update(e);
     
-    const moveHandler = e => {
-      if(!active) return;
-      let dx = e.clientX - startX;
-      let dy = e.clientY - startY;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      if(dist > maxDist){
-        dx = dx/dist*maxDist;
-        dy = dy/dist*maxDist;
-      }
-      knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-      
-      if(dist > 20){
-        if(Math.abs(dx) > Math.abs(dy)){
-          changeDirection(dx > 0 ? {x:1,y:0} : {x:-1,y:0});
-        } else {
-          changeDirection(dy > 0 ? {x:0,y:1} : {x:0,y:-1});
-        }
-      }
-    };
-    
+    const moveHandler = e => { if(active) update(e); };
     const upHandler = () => {
-      active = false;
+      active = false; lastDir = null;
       knob.style.transform = 'translate(-50%, -50%)';
       document.removeEventListener('mousemove', moveHandler);
       document.removeEventListener('mouseup', upHandler);
     };
-    
     document.addEventListener('mousemove', moveHandler);
     document.addEventListener('mouseup', upHandler);
   });
@@ -650,8 +741,7 @@ if(!Object.keys(STATE.profiles).length){
   saveAll(); renderProfiles();
 }
 resetGame();
-
-setInterval(()=>{ if(!STATE.running) draw(); }, 80);
+scheduleIdleDraw();
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
