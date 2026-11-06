@@ -1,12 +1,9 @@
-/* ========== Змейка · SKLN 2026 · v1.0 · PERFORMANCE ========== */
+/* ========== Змейка · SKLN 2026 · v1.0 · FINAL FIX ========== */
 
 const $ = id => document.getElementById(id);
-
-// КРИТИЧНО: desynchronized: true снижает input lag до минимума
 const canvas = $('game');
 const ctx = canvas.getContext('2d', { desynchronized: true, alpha: false });
 
-// ----- Кэш CSS-переменных (НЕ читать из DOM каждый кадр!) -----
 const COLORS = { bg:'', fg:'', grid:'', snake:'', food:'', accent:'' };
 function refreshColors(){
   const s = getComputedStyle(document.body);
@@ -18,7 +15,6 @@ function refreshColors(){
   COLORS.accent = s.getPropertyValue('--accent').trim();
 }
 
-// ----- Состояние -----
 const STATE = {
   cell: 20, cols: 20, rows: 20,
   snake: [], dir: {x:1,y:0}, nextDir: {x:1,y:0},
@@ -32,10 +28,9 @@ const STATE = {
   history:[],
   animFrame:null,
   idleTimer:null,
-  dirty:true // флаг необходимости перерисовки
+  dirty:true
 };
 
-// ----- Заставка -----
 setTimeout(() => {
   $('splash').classList.add('done');
   $('app').classList.remove('hidden');
@@ -44,7 +39,6 @@ setTimeout(() => {
   showOverlay('Готовы?', 'Нажмите «Старт» или пробел');
 }, 10000);
 
-// ----- Canvas -----
 function resizeCanvas(){
   const stage = document.querySelector('.stage');
   const maxW = stage.clientWidth - 16;
@@ -58,7 +52,6 @@ function resizeCanvas(){
 }
 window.addEventListener('resize', resizeCanvas);
 
-// ----- Idle-отрисовка (редкая, 10 FPS) -----
 function scheduleIdleDraw(){
   if(STATE.idleTimer) clearInterval(STATE.idleTimer);
   STATE.idleTimer = setInterval(()=>{
@@ -69,7 +62,6 @@ function scheduleIdleDraw(){
   }, 100);
 }
 
-// ----- Сохранение / загрузка -----
 function saveAll(){
   const data = {
     profiles: STATE.profiles,
@@ -129,8 +121,9 @@ function renderProfiles(){
   sel.appendChild(add);
 }
 
-// ----- Экспорт / Импорт -----
-$('btn-export').onclick = () => {
+// ЭКСПОРТ/ИМПОРТ — исправлено
+$('btn-export').addEventListener('click', (e) => {
+  e.stopPropagation();
   const data = { profiles: STATE.profiles, history: STATE.history };
   const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
@@ -139,9 +132,14 @@ $('btn-export').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
   beep(880, .1);
-};
-$('btn-import').onclick = () => $('file-import').click();
-$('file-import').onchange = e => {
+});
+
+$('btn-import').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('file-import').click();
+});
+
+$('file-import').addEventListener('change', e => {
   const f = e.target.files[0]; if(!f) return;
   const r = new FileReader();
   r.onload = () => {
@@ -156,11 +154,10 @@ $('file-import').onchange = e => {
     }catch(err){ alert('Ошибка файла'); }
   };
   r.readAsText(f);
-  e.target.value = ''; // сброс для повторного импорта
-};
+  e.target.value = '';
+});
 
-// ----- Профили -----
-$('profile').onchange = e => {
+$('profile').addEventListener('change', e => {
   if(e.target.value === '__new__'){
     const name = prompt('Имя профиля:', 'Игрок '+(Object.keys(STATE.profiles).length+1));
     if(!name){ renderProfiles(); return; }
@@ -172,19 +169,17 @@ $('profile').onchange = e => {
     saveAll(); loadProfile();
     resetGame();
   }
-};
+});
 
-// ----- Тема -----
-$('theme').onchange = e => {
+$('theme').addEventListener('change', e => {
   STATE.theme = e.target.value;
   document.body.dataset.theme = STATE.theme;
-  refreshColors(); // обновить кэш цветов
+  refreshColors();
   saveAll();
   STATE.dirty = true;
   draw();
-};
+});
 
-// ----- Звук -----
 let audioCtx;
 function beep(freq=440, dur=.1, type='square'){
   if(!STATE.sound) return;
@@ -200,20 +195,18 @@ function beep(freq=440, dur=.1, type='square'){
     o.stop(audioCtx.currentTime+dur);
   }catch(e){}
 }
-$('btn-sound').onclick = () => {
+$('btn-sound').addEventListener('click', () => {
   STATE.sound = !STATE.sound;
   $('btn-sound').textContent = STATE.sound ? '🔊' : '🔇';
   saveAll();
-};
+});
 
-// ----- Мгновенная смена направления -----
 function changeDirection(newDir){
   if(newDir.x === -STATE.dir.x && newDir.y === -STATE.dir.y) return;
   STATE.dir = newDir;
   STATE.nextDir = newDir;
 }
 
-// ----- Игровой цикл -----
 function gameLoop(timestamp){
   if(!STATE.running || STATE.paused){
     STATE.animFrame = null;
@@ -225,7 +218,6 @@ function gameLoop(timestamp){
   STATE.lastTime = timestamp;
   STATE.accumulator += delta;
   
-  // Ограничим максимум 5 шагов за кадр, чтобы не было "телепортов"
   let steps = 0;
   while(STATE.accumulator >= STATE.speed && steps < 5){
     step();
@@ -262,7 +254,6 @@ function step(){
   head.x = (head.x + STATE.cols) % STATE.cols;
   head.y = (head.y + STATE.rows) % STATE.rows;
 
-  // Оптимизированная проверка столкновения
   for(let i = 0; i < STATE.snake.length; i++){
     if(STATE.snake[i].x === head.x && STATE.snake[i].y === head.y){
       gameOver(); return;
@@ -323,13 +314,13 @@ function showGameOverDialog(){
   `;
   document.body.appendChild(modal);
   
-  modal.querySelector('#btn-gameover-close').onclick = () => {
+  modal.querySelector('#btn-gameover-close').addEventListener('click', () => {
     modal.remove();
     showOverlay('Игра окончена', 'Нажмите «Старт» для новой игры');
     STATE.dirty = true;
     scheduleIdleDraw();
-  };
-  modal.querySelector('#btn-gameover-save').onclick = () => {
+  });
+  modal.querySelector('#btn-gameover-save').addEventListener('click', () => {
     const name = modal.querySelector('#save-name').value.trim();
     if(name && name !== STATE.profile){
       if(!STATE.profiles[name]) STATE.profiles[name] = {best:0};
@@ -342,8 +333,27 @@ function showGameOverDialog(){
     modal.remove();
     resetGame();
     startGame();
-  };
+  });
 }
+
+// КНОПКА СТАРТ — исправлено
+$('btn-start').addEventListener('click', (e) => {
+  e.stopPropagation();
+  startGame();
+});
+
+$('btn-reset').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if(STATE.animFrame){ cancelAnimationFrame(STATE.animFrame); STATE.animFrame = null; }
+  STATE.running = false;
+  resetGame();
+  showOverlay('Готовы?', 'Нажмите «Старт»');
+  scheduleIdleDraw();
+});
+
+$('btn-pause').addEventListener('click', () => {
+  togglePause();
+});
 
 function startGame(){
   if(STATE.gameOver || !STATE.snake.length) resetGame();
@@ -353,6 +363,7 @@ function startGame(){
   hideOverlay();
   if(!STATE.animFrame) STATE.animFrame = requestAnimationFrame(gameLoop);
 }
+
 function togglePause(){
   if(!STATE.running){ startGame(); return; }
   STATE.paused = !STATE.paused;
@@ -366,17 +377,7 @@ function togglePause(){
     if(!STATE.animFrame) STATE.animFrame = requestAnimationFrame(gameLoop);
   }
 }
-$('btn-start').onclick = startGame;
-$('btn-reset').onclick = () => { 
-  if(STATE.animFrame){ cancelAnimationFrame(STATE.animFrame); STATE.animFrame = null; }
-  STATE.running = false;
-  resetGame();
-  showOverlay('Готовы?', 'Нажмите «Старт»');
-  scheduleIdleDraw();
-};
-$('btn-pause').onclick = togglePause;
 
-// ----- Оверлей -----
 function showOverlay(t, p){
   $('overlay-title').textContent = t;
   $('overlay-text').textContent = p;
@@ -384,16 +385,13 @@ function showOverlay(t, p){
 }
 function hideOverlay(){ $('overlay').classList.add('hidden'); }
 
-// ----- Отрисовка (оптимизированная) -----
 function draw(){
   const c = STATE.cell;
   const w = canvas.width, h = canvas.height;
   
-  // Фон
   ctx.fillStyle = COLORS.grid;
   ctx.fillRect(0, 0, w, h);
 
-  // Сетка (один проход)
   ctx.strokeStyle = 'rgba(255,255,255,.04)';
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -407,14 +405,12 @@ function draw(){
   }
   ctx.stroke();
 
-  // Еда (пульсация)
   const pulse = 1 + Math.sin(Date.now() * 0.005) * 0.08;
   ctx.fillStyle = COLORS.food;
   ctx.beginPath();
   ctx.arc(STATE.food.x * c + c/2, STATE.food.y * c + c/2, c * 0.35 * pulse, 0, Math.PI * 2);
   ctx.fill();
 
-  // Змейка (один путь для всех сегментов, кроме головы)
   const snakeLen = STATE.snake.length;
   if(snakeLen > 1){
     ctx.fillStyle = COLORS.snake;
@@ -431,7 +427,6 @@ function draw(){
     ctx.fill();
   }
   
-  // Голова (отдельно, другим цветом)
   if(snakeLen > 0){
     const h = STATE.snake[0];
     ctx.fillStyle = COLORS.accent;
@@ -444,7 +439,6 @@ function draw(){
     ctx.arcTo(x, y, x + sz, y, 4);
     ctx.fill();
 
-    // Глаза
     ctx.fillStyle = '#0f172a';
     const ex = h.x * c + c/2 + STATE.dir.x * c * 0.2;
     const ey = h.y * c + c/2 + STATE.dir.y * c * 0.2;
@@ -455,7 +449,6 @@ function draw(){
   }
 }
 
-// ----- Клавиатура -----
 document.addEventListener('keydown', e => {
   const k = e.key;
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(k)) e.preventDefault();
@@ -469,7 +462,6 @@ document.addEventListener('keydown', e => {
   if(map[k]) changeDirection(map[k]);
 }, {passive:false});
 
-// ----- Свайпы -----
 let touchStart = null;
 canvas.addEventListener('touchstart', e => {
   if(STATE.controlScheme === 'swipe' || STATE.controlScheme === 'hybrid'){
@@ -489,8 +481,11 @@ canvas.addEventListener('touchend', e => {
   touchStart = null;
 }, {passive:true});
 
-// ----- EVENT DELEGATION (вместо навешивания на каждую кнопку) -----
+// EVENT DELEGATION — исправлено, не блокирует кнопки overlay
 document.addEventListener('click', e => {
+  // Игнорируем клики внутри overlay
+  if(e.target.closest('.overlay')) return;
+  
   const dirBtn = e.target.closest('[data-dir]');
   if(dirBtn){
     e.preventDefault();
@@ -512,8 +507,9 @@ document.addEventListener('click', e => {
   }
 });
 
-// Для мгновенного отклика на мобильных — touchstart
 document.addEventListener('touchstart', e => {
+  if(e.target.closest('.overlay')) return;
+  
   const dirBtn = e.target.closest('[data-dir]');
   if(dirBtn){
     e.preventDefault();
@@ -535,7 +531,6 @@ document.addEventListener('touchstart', e => {
   }
 }, {passive:false});
 
-// ----- Применение схемы управления -----
 function applyControlScheme(){
   const bottom = $('controls-bottom');
   bottom.innerHTML = '';
@@ -588,7 +583,6 @@ function applyControlScheme(){
   }
 }
 
-// ----- Джойстик -----
 function initJoystick(zone){
   const knob = zone.querySelector('.joystick-knob');
   let active = false, startX, startY, lastDir = null;
@@ -611,7 +605,6 @@ function initJoystick(zone){
       } else {
         newDir = dy > 0 ? {x:0,y:1} : {x:0,y:-1};
       }
-      // Меняем направление только при изменении
       if(!lastDir || lastDir.x !== newDir.x || lastDir.y !== newDir.y){
         changeDirection(newDir);
         lastDir = newDir;
@@ -639,7 +632,6 @@ function initJoystick(zone){
     knob.style.transform = 'translate(-50%, -50%)';
   });
   
-  // Мышь
   zone.addEventListener('mousedown', e => {
     e.preventDefault();
     active = true; lastDir = null;
@@ -660,8 +652,8 @@ function initJoystick(zone){
   });
 }
 
-// ----- Меню настроек -----
-$('btn-menu').onclick = () => {
+// МЕНЮ НАСТРОЕК — исправлено, добавлена опция джойстика
+$('btn-menu').addEventListener('click', () => {
   const modal = document.createElement('div');
   modal.className = 'settings-modal';
   
@@ -697,11 +689,11 @@ $('btn-menu').onclick = () => {
           <option value="hybrid">6. Гибрид (свайпы + D-Pad)</option>
         </select>
       </div>
-      <div class="setting-group">
+      <div class="setting-group" id="joystick-side-group" style="${STATE.controlScheme === 'joystick' ? '' : 'display:none'}">
         <label>Позиция джойстика</label>
         <select id="sel-joystick-side">
-          <option value="left">Слева</option>
-          <option value="right">Справа</option>
+          <option value="left">Слева (для левой руки)</option>
+          <option value="right">Справа (для правой руки)</option>
         </select>
       </div>
       ${STATE.history.length > 0 ? `
@@ -720,21 +712,31 @@ $('btn-menu').onclick = () => {
   
   const selControl = modal.querySelector('#sel-control');
   const selSide = modal.querySelector('#sel-joystick-side');
+  const sideGroup = modal.querySelector('#joystick-side-group');
+  
   selControl.value = STATE.controlScheme;
   selSide.value = STATE.joystickSide;
   
-  modal.querySelector('#btn-settings-close').onclick = () => modal.remove();
-  modal.querySelector('#btn-settings-save').onclick = () => {
+  // Показывать/скрывать опцию джойстика
+  selControl.addEventListener('change', () => {
+    if(selControl.value === 'joystick'){
+      sideGroup.style.display = '';
+    } else {
+      sideGroup.style.display = 'none';
+    }
+  });
+  
+  modal.querySelector('#btn-settings-close').addEventListener('click', () => modal.remove());
+  modal.querySelector('#btn-settings-save').addEventListener('click', () => {
     STATE.controlScheme = selControl.value;
     STATE.joystickSide = selSide.value;
     saveAll();
     applyControlScheme();
     modal.remove();
-  };
-  modal.onclick = e => { if(e.target === modal) modal.remove(); };
-};
+  });
+  modal.addEventListener('click', e => { if(e.target === modal) modal.remove(); });
+});
 
-// ----- Старт -----
 loadAll();
 if(!Object.keys(STATE.profiles).length){
   STATE.profiles['Игрок 1'] = {best:0};
