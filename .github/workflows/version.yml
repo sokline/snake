@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'version.json'   # чтобы избежать бесконечного цикла
+      - 'version.js'
 
 jobs:
   bump-version:
@@ -22,32 +22,40 @@ jobs:
         run: |
           echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "date=$(git log -1 --format=%cI)" >> $GITHUB_OUTPUT
-          echo "message=$(git log -1 --pretty=%B | head -n 1)" >> $GITHUB_OUTPUT
+          MSG=$(git log -1 --pretty=%B | head -n 1 | sed 's/"/\\"/g' | tr '\n' ' ')
+          echo "message=$MSG" >> $GITHUB_OUTPUT
           
-          # Авто-инкремент патч-версии
-          CURRENT=$(jq -r .version version.json)
+          # Читаем текущую версию или создаём новую
+          if [ -f version.js ]; then
+            CURRENT=$(grep -oP 'version:\s*"\K[^"]+' version.js || echo "1.0.0")
+          else
+            CURRENT="1.0.0"
+          fi
+          
           MAJOR=$(echo $CURRENT | cut -d. -f1)
           MINOR=$(echo $CURRENT | cut -d. -f2)
           PATCH=$(echo $CURRENT | cut -d. -f3)
           NEW_PATCH=$((PATCH + 1))
           echo "new_version=$MAJOR.$MINOR.$NEW_PATCH" >> $GITHUB_OUTPUT
 
-      - name: Update version.json
+      - name: Generate version.js
         run: |
-          cat > version.json << EOF
-          {
-            "version": "${{ steps.info.outputs.new_version }}",
-            "commit": "${{ steps.info.outputs.hash }}",
-            "date": "${{ steps.info.outputs.date }}",
-            "message": ${{ toJSON(steps.info.outputs.message) }}
-          }
+          cat > version.js << EOF
+          // Автообновлено GitHub Actions · $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          // Не редактируйте вручную!
+          window.APP_VERSION = {
+            version: "${{ steps.info.outputs.new_version }}",
+            commit: "${{ steps.info.outputs.hash }}",
+            date: "${{ steps.info.outputs.date }}",
+            message: "${{ steps.info.outputs.message }}"
+          };
           EOF
-          cat version.json
+          cat version.js
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.json
+          git add version.js
           git commit -m "chore: bump version to ${{ steps.info.outputs.new_version }} [skip ci]" || echo "No changes"
           git push
