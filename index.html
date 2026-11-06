@@ -11,6 +11,17 @@
 </head>
 <body data-theme="dark">
 
+  <!-- INLINE FALLBACK: работает даже если version.js не загрузился -->
+  <script>
+    // Версия по умолчанию — перезаписывается version.js если он загрузится
+    window.APP_VERSION = window.APP_VERSION || {
+      version: "1.0.0",
+      commit: "local",
+      date: new Date().toISOString(),
+      message: "Локальная сборка"
+    };
+  </script>
+
   <section id="splash" class="splash">
     <div class="splash-inner">
       <h1 class="splash-title">ЗМЕЙКА</h1>
@@ -70,7 +81,8 @@
     </footer>
   </main>
 
-  <script src="version.js"></script>
+  <!-- version.js опционален — если 404, используется inline fallback -->
+  <script src="version.js" onerror="console.warn('version.js не загружен, используется inline версия')"></script>
   <script src="game.js"></script>
 </body>
 </html>
