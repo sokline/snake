@@ -1,4 +1,4 @@
-/* ========== Змейка · SKLN 2026 · v1.0 · FINAL FIX ========== */
+/* ========== Змейка · SKLN 2026 · FINAL FIX ========== */
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -28,9 +28,91 @@ const STATE = {
   history:[],
   animFrame:null,
   idleTimer:null,
-  dirty:true
+  dirty:true,
+  version:null // НОВОЕ: данные версии
 };
 
+// ===== НОВОЕ: Загрузка версии из version.json =====
+async function loadVersion(){
+  try{
+    const r = await fetch('version.json?t=' + Date.now(), {cache:'no-store'});
+    if(!r.ok) throw new Error('no version.json');
+    STATE.version = await r.json();
+    renderVersion();
+  }catch(e){
+    STATE.version = {version:'1.0.0', commit:'local', date:new Date().toISOString(), message:'Локальная сборка'};
+    renderVersion();
+  }
+}
+
+function renderVersion(){
+  const v = STATE.version;
+  if(!v) return;
+  
+  const date = new Date(v.date);
+  const dateStr = date.toLocaleDateString('ru-RU', {
+    day:'2-digit', month:'2-digit', year:'numeric'
+  });
+  const timeStr = date.toLocaleTimeString('ru-RU', {
+    hour:'2-digit', minute:'2-digit'
+  });
+  
+  // Определяем репозиторий для ссылки на коммит
+  const repoUrl = getRepoUrl();
+  const commitLink = repoUrl && v.commit !== 'local'
+    ? `<a href="${repoUrl}/commit/${v.commit}" target="_blank" rel="noopener">${v.commit}</a>`
+    : `<span>${v.commit}</span>`;
+  
+  const splashEl = $('splash-version');
+  if(splashEl){
+    splashEl.innerHTML = `
+      <div class="v-row">
+        <span class="v-label">Версия</span>
+        <span class="v-value v-version">v${v.version}</span>
+      </div>
+      <div class="v-row">
+        <span class="v-label">Коммит</span>
+        <span class="v-value">${commitLink}</span>
+      </div>
+      <div class="v-row">
+        <span class="v-label">Дата</span>
+        <span class="v-value">${dateStr}, ${timeStr}</span>
+      </div>
+      <div class="v-row">
+        <span class="v-label">Описание</span>
+        <span class="v-value">${escapeHtml(v.message || '—')}</span>
+      </div>
+    `;
+  }
+  
+  // Обновляем футер
+  const footer = $('footer-version');
+  if(footer){
+    footer.textContent = `SKLN · 2026 · v${v.version} · ${v.commit}`;
+  }
+}
+
+function getRepoUrl(){
+  // Пытаемся определить GitHub Pages URL
+  const host = window.location.hostname;
+  if(host.endsWith('github.io')){
+    const parts = host.replace('.github.io','');
+    const path = window.location.pathname.split('/')[1];
+    return `https://github.com/${parts}/${path}`;
+  }
+  return null;
+}
+
+function escapeHtml(s){
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// Запускаем загрузку версии сразу
+loadVersion();
+
+// ===== Заставка =====
 setTimeout(() => {
   $('splash').classList.add('done');
   $('app').classList.remove('hidden');
@@ -121,7 +203,6 @@ function renderProfiles(){
   sel.appendChild(add);
 }
 
-// ЭКСПОРТ/ИМПОРТ — исправлено
 $('btn-export').addEventListener('click', (e) => {
   e.stopPropagation();
   const data = { profiles: STATE.profiles, history: STATE.history };
@@ -212,7 +293,6 @@ function gameLoop(timestamp){
     STATE.animFrame = null;
     return;
   }
-  
   if(!STATE.lastTime) STATE.lastTime = timestamp;
   const delta = timestamp - STATE.lastTime;
   STATE.lastTime = timestamp;
@@ -336,7 +416,6 @@ function showGameOverDialog(){
   });
 }
 
-// КНОПКА СТАРТ — исправлено
 $('btn-start').addEventListener('click', (e) => {
   e.stopPropagation();
   startGame();
@@ -428,9 +507,9 @@ function draw(){
   }
   
   if(snakeLen > 0){
-    const h = STATE.snake[0];
+    const head = STATE.snake[0];
     ctx.fillStyle = COLORS.accent;
-    const x = h.x * c + 1, y = h.y * c + 1, sz = c - 2;
+    const x = head.x * c + 1, y = head.y * c + 1, sz = c - 2;
     ctx.beginPath();
     ctx.moveTo(x + 4, y);
     ctx.arcTo(x + sz, y, x + sz, y + sz, 4);
@@ -440,8 +519,8 @@ function draw(){
     ctx.fill();
 
     ctx.fillStyle = '#0f172a';
-    const ex = h.x * c + c/2 + STATE.dir.x * c * 0.2;
-    const ey = h.y * c + c/2 + STATE.dir.y * c * 0.2;
+    const ex = head.x * c + c/2 + STATE.dir.x * c * 0.2;
+    const ey = head.y * c + c/2 + STATE.dir.y * c * 0.2;
     ctx.beginPath();
     ctx.arc(ex - STATE.dir.y * 3, ey + STATE.dir.x * 3, 2, 0, Math.PI * 2);
     ctx.arc(ex + STATE.dir.y * 3, ey - STATE.dir.x * 3, 2, 0, Math.PI * 2);
@@ -481,11 +560,8 @@ canvas.addEventListener('touchend', e => {
   touchStart = null;
 }, {passive:true});
 
-// EVENT DELEGATION — исправлено, не блокирует кнопки overlay
 document.addEventListener('click', e => {
-  // Игнорируем клики внутри overlay
   if(e.target.closest('.overlay')) return;
-  
   const dirBtn = e.target.closest('[data-dir]');
   if(dirBtn){
     e.preventDefault();
@@ -509,7 +585,6 @@ document.addEventListener('click', e => {
 
 document.addEventListener('touchstart', e => {
   if(e.target.closest('.overlay')) return;
-  
   const dirBtn = e.target.closest('[data-dir]');
   if(dirBtn){
     e.preventDefault();
@@ -534,7 +609,6 @@ document.addEventListener('touchstart', e => {
 function applyControlScheme(){
   const bottom = $('controls-bottom');
   bottom.innerHTML = '';
-  
   document.querySelectorAll('.tap-zones-overlay').forEach(el => el.remove());
   
   const scheme = STATE.controlScheme;
@@ -652,7 +726,6 @@ function initJoystick(zone){
   });
 }
 
-// МЕНЮ НАСТРОЕК — исправлено, добавлена опция джойстика
 $('btn-menu').addEventListener('click', () => {
   const modal = document.createElement('div');
   modal.className = 'settings-modal';
@@ -675,9 +748,22 @@ $('btn-menu').addEventListener('click', () => {
     historyHTML += '</div>';
   }
   
+  // Информация о версии
+  const v = STATE.version || {version:'?', commit:'?', date:new Date().toISOString(), message:''};
+  const vDate = new Date(v.date);
+  const vInfoHtml = `
+    <div class="setting-group" style="padding:.8rem; background:rgba(255,255,255,.03); border-radius:10px; font-size:.8rem; line-height:1.6">
+      <label style="margin-bottom:.3rem">📦 Текущая версия</label>
+      <div><b style="color:var(--accent)">v${v.version}</b> · коммит <code>${v.commit}</code></div>
+      <div style="opacity:.7">${vDate.toLocaleDateString('ru-RU')} ${vDate.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}</div>
+      ${v.message ? `<div style="opacity:.6; font-style:italic; margin-top:.3rem">"${escapeHtml(v.message)}"</div>` : ''}
+    </div>
+  `;
+  
   modal.innerHTML = `
     <div class="settings-box">
       <h2>⚙ Настройки</h2>
+      ${vInfoHtml}
       <div class="setting-group">
         <label>Схема управления</label>
         <select id="sel-control">
@@ -717,7 +803,6 @@ $('btn-menu').addEventListener('click', () => {
   selControl.value = STATE.controlScheme;
   selSide.value = STATE.joystickSide;
   
-  // Показывать/скрывать опцию джойстика
   selControl.addEventListener('change', () => {
     if(selControl.value === 'joystick'){
       sideGroup.style.display = '';
