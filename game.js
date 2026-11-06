@@ -1,4 +1,4 @@
-/* ========== Змейка · SKLN 2026 · AUTO-UPDATE ========== */
+/* ========== Змейка · SKLN 2026 · OFFLINE-ROBUST ========== */
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -31,14 +31,18 @@ const STATE = {
   dirty:true,
   version:null,
   isOnline: navigator.onLine,
-  lastUpdateCheck: 0
+  lastUpdateCheck: 0,
+  swReady: false
 };
 
-// ===== Загрузка версии из window.APP_VERSION =====
+// ===== Загрузка версии (с защитой) =====
 function loadVersion(){
-  const v = window.APP_VERSION || {
-    version: '1.0.0', commit: 'local',
-    date: new Date().toISOString(), message: 'Локальная сборка'
+  // Берём из window.APP_VERSION (inline fallback или version.js)
+  const v = (typeof window !== 'undefined' && window.APP_VERSION) || {
+    version: '1.0.0',
+    commit: 'local',
+    date: new Date().toISOString(),
+    message: 'Локальная сборка'
   };
   STATE.version = v;
   renderVersion();
@@ -57,7 +61,7 @@ function renderVersion(){
   });
   
   const repoUrl = getRepoUrl();
-  const commitLink = repoUrl && v.commit !== 'local'
+  const commitLink = repoUrl && v.commit !== 'local' && v.commit !== 'cached'
     ? `<a href="${repoUrl}/commit/${v.commit}" target="_blank" rel="noopener">${v.commit}</a>`
     : `<span>${v.commit}</span>`;
   
@@ -93,12 +97,14 @@ function renderVersion(){
 }
 
 function getRepoUrl(){
-  const host = window.location.hostname;
-  if(host.endsWith('github.io')){
-    const user = host.replace('.github.io','');
-    const repo = window.location.pathname.split('/')[1];
-    return `https://github.com/${user}/${repo}`;
-  }
+  try {
+    const host = window.location.hostname;
+    if(host.endsWith('github.io')){
+      const user = host.replace('.github.io','');
+      const repo = window.location.pathname.split('/')[1];
+      return `https://github.com/${user}/${repo}`;
+    }
+  } catch(e) {}
   return null;
 }
 
@@ -108,9 +114,8 @@ function escapeHtml(s){
   return div.innerHTML;
 }
 
-// ===== ПРОВЕРКА ОБНОВЛЕНИЙ =====
+// ===== ПРОВЕРКА ОБНОВЛЕНИЙ (безопасная) =====
 async function checkForUpdate(force = false){
-  // Защита от слишком частых проверок (не чаще раза в 5 минут, если не force)
   const now = Date.now();
   if(!force && now - STATE.lastUpdateCheck < 5 * 60 * 1000){
     return {status:'skipped', reason:'too_soon'};
@@ -123,17 +128,17 @@ async function checkForUpdate(force = false){
   STATE.lastUpdateCheck = now;
   
   try{
-    // Запрашиваем version.js с обходом кэша
     const response = await fetch('version.js?t=' + now, {
       cache: 'no-store',
       headers: {'Cache-Control': 'no-cache'}
     });
     
-    if(!response.ok) throw new Error('HTTP ' + response.status);
+    if(!response.ok) {
+      return {status:'error', error: 'HTTP ' + response.status};
+    }
     
     const text = await response.text();
     
-    // Парсим версию из JS-файла
     const versionMatch = text.match(/version:\s*["']([^"']+)["']/);
     const commitMatch = text.match(/commit:\s*["']([^"']+)["']/);
     const dateMatch = text.match(/date:\s*["']([^"']+)["']/);
@@ -148,15 +153,12 @@ async function checkForUpdate(force = false){
       message: messageMatch ? messageMatch[1] : ''
     };
     
-    // Обновляем window.APP_VERSION для SW
     window.APP_VERSION = remoteVersion;
     
-    // Сравниваем версии
     const current = STATE.version.version;
     const remote = remoteVersion.version;
     
     if(compareVersions(remote, current) > 0){
-      // Есть новая версия!
       showUpdateBanner(remoteVersion);
       return {status:'update_available', remote: remoteVersion};
     } else {
@@ -168,7 +170,6 @@ async function checkForUpdate(force = false){
   }
 }
 
-// Сравнение семантических версий: "1.2.3" vs "1.2.4"
 function compareVersions(a, b){
   const pa = a.split('.').map(Number);
   const pb = b.split('.').map(Number);
@@ -180,7 +181,6 @@ function compareVersions(a, b){
   return 0;
 }
 
-// ===== БАННЕР ОБНОВЛЕНИЯ =====
 let updateBannerEl = null;
 function showUpdateBanner(remoteVersion){
   if(updateBannerEl) updateBannerEl.remove();
@@ -211,19 +211,14 @@ function showUpdateBanner(remoteVersion){
   });
 }
 
-// ===== ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ =====
 async function performUpdate(){
-  // Предупреждение о несохранённом прогрессе
   if(STATE.running && !STATE.paused){
     const confirmed = confirm(
-      '⚠️ Игра ещё идёт!\n\n' +
-      'Несохранённый прогресс будет потерян.\n' +
-      'Продолжить обновление?'
+      '⚠️ Игра ещё идёт!\n\nНесохранённый прогресс будет потерян.\nПродолжить обновление?'
     );
     if(!confirmed) return;
   }
   
-  // Останавливаем игру
   if(STATE.animFrame){
     cancelAnimationFrame(STATE.animFrame);
     STATE.animFrame = null;
@@ -231,30 +226,23 @@ async function performUpdate(){
   STATE.running = false;
   
   try{
-    // 1. Отменяем регистрацию всех Service Workers
     if('serviceWorker' in navigator){
       const regs = await navigator.serviceWorker.getRegistrations();
       for(const reg of regs){
         await reg.unregister();
       }
     }
-    
-    // 2. Очищаем все кэши
     const keys = await caches.keys();
     await Promise.all(keys.map(k => caches.delete(k)));
-    
-    // 3. Перезагружаем страницу
     window.location.reload();
   }catch(e){
     alert('Ошибка обновления: ' + e.message);
   }
 }
 
-// ===== ОТСЛЕЖИВАНИЕ ОНЛАЙН/ОФЛАЙН =====
 window.addEventListener('online', () => {
   STATE.isOnline = true;
   renderVersion();
-  // При восстановлении связи — проверяем обновления
   setTimeout(() => checkForUpdate(false), 2000);
 });
 window.addEventListener('offline', () => {
@@ -269,8 +257,10 @@ setTimeout(() => {
   refreshColors();
   resizeCanvas();
   showOverlay('Готовы?', 'Нажмите «Старт» или пробел');
-  // Тихая проверка при запуске
-  setTimeout(() => checkForUpdate(false), 3000);
+  // Тихая проверка через 3 сек (только если есть сеть)
+  if(navigator.onLine){
+    setTimeout(() => checkForUpdate(false), 3000);
+  }
 }, 10000);
 
 function resizeCanvas(){
@@ -405,7 +395,7 @@ $('profile').addEventListener('change', e => {
 });
 
 $('theme').addEventListener('change', e => {
-  STATE.theme = e.target.value;
+  STATE.theme = e.value;
   document.body.dataset.theme = STATE.theme;
   refreshColors();
   saveAll();
@@ -878,7 +868,6 @@ function initJoystick(zone){
   });
 }
 
-// ===== МЕНЮ НАСТРОЕК =====
 $('btn-menu').addEventListener('click', () => {
   const modal = document.createElement('div');
   modal.className = 'settings-modal';
@@ -972,14 +961,12 @@ $('btn-menu').addEventListener('click', () => {
     }
   });
   
-  // Кнопка «Проверить обновление»
   modal.querySelector('#btn-check-update').addEventListener('click', async () => {
     statusEl.innerHTML = '<span class="status-dot checking"></span> Проверка...';
     const result = await checkForUpdate(true);
     
     if(result.status === 'update_available'){
       statusEl.innerHTML = `<span style="color:var(--success)">✓ Доступна v${result.remote.version}</span>`;
-      // Баннер уже показан через showUpdateBanner
     } else if(result.status === 'up_to_date'){
       statusEl.innerHTML = `<span style="color:var(--success)">✓ Версия актуальна</span>`;
     } else if(result.status === 'offline'){
@@ -989,7 +976,6 @@ $('btn-menu').addEventListener('click', () => {
     }
   });
   
-  // Кнопка «Обновить сейчас»
   modal.querySelector('#btn-force-update').addEventListener('click', () => {
     performUpdate();
   });
@@ -1016,5 +1002,7 @@ resetGame();
 scheduleIdleDraw();
 
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').catch(()=>{});
+  navigator.serviceWorker.register('sw.js').catch(err => {
+    console.warn('SW registration failed:', err);
+  });
 }
