@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "commit": "initial",
-  "date": "2026-11-07T00:00:00Z",
-  "message": "Initial release"
+  "version": "1.0.1",
+  "commit": "c417fb0",
+  "date": "2026-11-06T20:11:03+03:00",
+  "message": "Create version.yml"
 }
