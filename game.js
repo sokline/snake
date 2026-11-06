@@ -1,4 +1,4 @@
-/* ========== Змейка · SKLN 2026 · FINAL FIX ========== */
+/* ========== Змейка · SKLN 2026 · AUTO-UPDATE ========== */
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
@@ -29,20 +29,19 @@ const STATE = {
   animFrame:null,
   idleTimer:null,
   dirty:true,
-  version:null // НОВОЕ: данные версии
+  version:null,
+  isOnline: navigator.onLine,
+  lastUpdateCheck: 0
 };
 
-// ===== НОВОЕ: Загрузка версии из version.json =====
-async function loadVersion(){
-  try{
-    const r = await fetch('version.json?t=' + Date.now(), {cache:'no-store'});
-    if(!r.ok) throw new Error('no version.json');
-    STATE.version = await r.json();
-    renderVersion();
-  }catch(e){
-    STATE.version = {version:'1.0.0', commit:'local', date:new Date().toISOString(), message:'Локальная сборка'};
-    renderVersion();
-  }
+// ===== Загрузка версии из window.APP_VERSION =====
+function loadVersion(){
+  const v = window.APP_VERSION || {
+    version: '1.0.0', commit: 'local',
+    date: new Date().toISOString(), message: 'Локальная сборка'
+  };
+  STATE.version = v;
+  renderVersion();
 }
 
 function renderVersion(){
@@ -57,7 +56,6 @@ function renderVersion(){
     hour:'2-digit', minute:'2-digit'
   });
   
-  // Определяем репозиторий для ссылки на коммит
   const repoUrl = getRepoUrl();
   const commitLink = repoUrl && v.commit !== 'local'
     ? `<a href="${repoUrl}/commit/${v.commit}" target="_blank" rel="noopener">${v.commit}</a>`
@@ -85,20 +83,21 @@ function renderVersion(){
     `;
   }
   
-  // Обновляем футер
   const footer = $('footer-version');
   if(footer){
-    footer.textContent = `SKLN · 2026 · v${v.version} · ${v.commit}`;
+    const dot = STATE.isOnline
+      ? '<span class="status-dot online"></span>'
+      : '<span class="status-dot offline"></span>';
+    footer.innerHTML = `${dot}SKLN · 2026 · v${v.version} · ${v.commit}`;
   }
 }
 
 function getRepoUrl(){
-  // Пытаемся определить GitHub Pages URL
   const host = window.location.hostname;
   if(host.endsWith('github.io')){
-    const parts = host.replace('.github.io','');
-    const path = window.location.pathname.split('/')[1];
-    return `https://github.com/${parts}/${path}`;
+    const user = host.replace('.github.io','');
+    const repo = window.location.pathname.split('/')[1];
+    return `https://github.com/${user}/${repo}`;
   }
   return null;
 }
@@ -109,8 +108,159 @@ function escapeHtml(s){
   return div.innerHTML;
 }
 
-// Запускаем загрузку версии сразу
-loadVersion();
+// ===== ПРОВЕРКА ОБНОВЛЕНИЙ =====
+async function checkForUpdate(force = false){
+  // Защита от слишком частых проверок (не чаще раза в 5 минут, если не force)
+  const now = Date.now();
+  if(!force && now - STATE.lastUpdateCheck < 5 * 60 * 1000){
+    return {status:'skipped', reason:'too_soon'};
+  }
+  
+  if(!navigator.onLine){
+    return {status:'offline'};
+  }
+  
+  STATE.lastUpdateCheck = now;
+  
+  try{
+    // Запрашиваем version.js с обходом кэша
+    const response = await fetch('version.js?t=' + now, {
+      cache: 'no-store',
+      headers: {'Cache-Control': 'no-cache'}
+    });
+    
+    if(!response.ok) throw new Error('HTTP ' + response.status);
+    
+    const text = await response.text();
+    
+    // Парсим версию из JS-файла
+    const versionMatch = text.match(/version:\s*["']([^"']+)["']/);
+    const commitMatch = text.match(/commit:\s*["']([^"']+)["']/);
+    const dateMatch = text.match(/date:\s*["']([^"']+)["']/);
+    const messageMatch = text.match(/message:\s*["']([^"']+)["']/);
+    
+    if(!versionMatch) throw new Error('parse error');
+    
+    const remoteVersion = {
+      version: versionMatch[1],
+      commit: commitMatch ? commitMatch[1] : '?',
+      date: dateMatch ? dateMatch[1] : new Date().toISOString(),
+      message: messageMatch ? messageMatch[1] : ''
+    };
+    
+    // Обновляем window.APP_VERSION для SW
+    window.APP_VERSION = remoteVersion;
+    
+    // Сравниваем версии
+    const current = STATE.version.version;
+    const remote = remoteVersion.version;
+    
+    if(compareVersions(remote, current) > 0){
+      // Есть новая версия!
+      showUpdateBanner(remoteVersion);
+      return {status:'update_available', remote: remoteVersion};
+    } else {
+      return {status:'up_to_date'};
+    }
+  }catch(e){
+    console.warn('Update check failed:', e);
+    return {status:'error', error: e.message};
+  }
+}
+
+// Сравнение семантических версий: "1.2.3" vs "1.2.4"
+function compareVersions(a, b){
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for(let i = 0; i < 3; i++){
+    const na = pa[i] || 0, nb = pb[i] || 0;
+    if(na > nb) return 1;
+    if(na < nb) return -1;
+  }
+  return 0;
+}
+
+// ===== БАННЕР ОБНОВЛЕНИЯ =====
+let updateBannerEl = null;
+function showUpdateBanner(remoteVersion){
+  if(updateBannerEl) updateBannerEl.remove();
+  
+  updateBannerEl = document.createElement('div');
+  updateBannerEl.className = 'update-banner';
+  updateBannerEl.innerHTML = `
+    <div class="ub-text">
+      🎉 Доступна новая версия: <b>v${remoteVersion.version}</b>
+      <span style="opacity:.7; font-size:.8rem; display:block">
+        ${escapeHtml(remoteVersion.message || 'Обновите приложение')}
+      </span>
+    </div>
+    <div class="ub-actions">
+      <button class="btn" id="ub-later">Позже</button>
+      <button class="btn primary" id="ub-update">Обновить</button>
+    </div>
+  `;
+  document.body.appendChild(updateBannerEl);
+  
+  updateBannerEl.querySelector('#ub-later').addEventListener('click', () => {
+    updateBannerEl.remove();
+    updateBannerEl = null;
+  });
+  
+  updateBannerEl.querySelector('#ub-update').addEventListener('click', () => {
+    performUpdate();
+  });
+}
+
+// ===== ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ =====
+async function performUpdate(){
+  // Предупреждение о несохранённом прогрессе
+  if(STATE.running && !STATE.paused){
+    const confirmed = confirm(
+      '⚠️ Игра ещё идёт!\n\n' +
+      'Несохранённый прогресс будет потерян.\n' +
+      'Продолжить обновление?'
+    );
+    if(!confirmed) return;
+  }
+  
+  // Останавливаем игру
+  if(STATE.animFrame){
+    cancelAnimationFrame(STATE.animFrame);
+    STATE.animFrame = null;
+  }
+  STATE.running = false;
+  
+  try{
+    // 1. Отменяем регистрацию всех Service Workers
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for(const reg of regs){
+        await reg.unregister();
+      }
+    }
+    
+    // 2. Очищаем все кэши
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+    
+    // 3. Перезагружаем страницу
+    window.location.reload();
+  }catch(e){
+    alert('Ошибка обновления: ' + e.message);
+  }
+}
+
+// ===== ОТСЛЕЖИВАНИЕ ОНЛАЙН/ОФЛАЙН =====
+window.addEventListener('online', () => {
+  STATE.isOnline = true;
+  renderVersion();
+  // При восстановлении связи — проверяем обновления
+  setTimeout(() => checkForUpdate(false), 2000);
+});
+window.addEventListener('offline', () => {
+  STATE.isOnline = false;
+  renderVersion();
+});
 
 // ===== Заставка =====
 setTimeout(() => {
@@ -119,6 +269,8 @@ setTimeout(() => {
   refreshColors();
   resizeCanvas();
   showOverlay('Готовы?', 'Нажмите «Старт» или пробел');
+  // Тихая проверка при запуске
+  setTimeout(() => checkForUpdate(false), 3000);
 }, 10000);
 
 function resizeCanvas(){
@@ -561,7 +713,7 @@ canvas.addEventListener('touchend', e => {
 }, {passive:true});
 
 document.addEventListener('click', e => {
-  if(e.target.closest('.overlay')) return;
+  if(e.target.closest('.overlay') || e.target.closest('.settings-modal') || e.target.closest('.update-banner')) return;
   const dirBtn = e.target.closest('[data-dir]');
   if(dirBtn){
     e.preventDefault();
@@ -584,7 +736,7 @@ document.addEventListener('click', e => {
 });
 
 document.addEventListener('touchstart', e => {
-  if(e.target.closest('.overlay')) return;
+  if(e.target.closest('.overlay') || e.target.closest('.settings-modal') || e.target.closest('.update-banner')) return;
   const dirBtn = e.target.closest('[data-dir]');
   if(dirBtn){
     e.preventDefault();
@@ -726,6 +878,7 @@ function initJoystick(zone){
   });
 }
 
+// ===== МЕНЮ НАСТРОЕК =====
 $('btn-menu').addEventListener('click', () => {
   const modal = document.createElement('div');
   modal.className = 'settings-modal';
@@ -748,15 +901,19 @@ $('btn-menu').addEventListener('click', () => {
     historyHTML += '</div>';
   }
   
-  // Информация о версии
   const v = STATE.version || {version:'?', commit:'?', date:new Date().toISOString(), message:''};
   const vDate = new Date(v.date);
+  const onlineStatus = STATE.isOnline
+    ? '<span class="status-dot online"></span> онлайн'
+    : '<span class="status-dot offline"></span> офлайн';
+  
   const vInfoHtml = `
     <div class="setting-group" style="padding:.8rem; background:rgba(255,255,255,.03); border-radius:10px; font-size:.8rem; line-height:1.6">
       <label style="margin-bottom:.3rem">📦 Текущая версия</label>
       <div><b style="color:var(--accent)">v${v.version}</b> · коммит <code>${v.commit}</code></div>
       <div style="opacity:.7">${vDate.toLocaleDateString('ru-RU')} ${vDate.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'})}</div>
       ${v.message ? `<div style="opacity:.6; font-style:italic; margin-top:.3rem">"${escapeHtml(v.message)}"</div>` : ''}
+      <div style="margin-top:.5rem">${onlineStatus}</div>
     </div>
   `;
   
@@ -789,9 +946,12 @@ $('btn-menu').addEventListener('click', () => {
         </div>
       ` : ''}
       <div class="settings-actions">
+        <button class="btn" id="btn-check-update">🔄 Обновление</button>
+        <button class="btn danger" id="btn-force-update">⚡ Обновить сейчас</button>
         <button class="btn" id="btn-settings-close">Закрыть</button>
         <button class="btn primary" id="btn-settings-save">Сохранить</button>
       </div>
+      <div id="update-status" style="margin-top:1rem; font-size:.85rem; text-align:center; min-height:1.5em"></div>
     </div>
   `;
   document.body.appendChild(modal);
@@ -799,6 +959,7 @@ $('btn-menu').addEventListener('click', () => {
   const selControl = modal.querySelector('#sel-control');
   const selSide = modal.querySelector('#sel-joystick-side');
   const sideGroup = modal.querySelector('#joystick-side-group');
+  const statusEl = modal.querySelector('#update-status');
   
   selControl.value = STATE.controlScheme;
   selSide.value = STATE.joystickSide;
@@ -809,6 +970,28 @@ $('btn-menu').addEventListener('click', () => {
     } else {
       sideGroup.style.display = 'none';
     }
+  });
+  
+  // Кнопка «Проверить обновление»
+  modal.querySelector('#btn-check-update').addEventListener('click', async () => {
+    statusEl.innerHTML = '<span class="status-dot checking"></span> Проверка...';
+    const result = await checkForUpdate(true);
+    
+    if(result.status === 'update_available'){
+      statusEl.innerHTML = `<span style="color:var(--success)">✓ Доступна v${result.remote.version}</span>`;
+      // Баннер уже показан через showUpdateBanner
+    } else if(result.status === 'up_to_date'){
+      statusEl.innerHTML = `<span style="color:var(--success)">✓ Версия актуальна</span>`;
+    } else if(result.status === 'offline'){
+      statusEl.innerHTML = `<span style="color:var(--warning)">⚠ Нет интернета</span>`;
+    } else if(result.status === 'error'){
+      statusEl.innerHTML = `<span style="color:var(--danger)">✗ Ошибка: ${escapeHtml(result.error)}</span>`;
+    }
+  });
+  
+  // Кнопка «Обновить сейчас»
+  modal.querySelector('#btn-force-update').addEventListener('click', () => {
+    performUpdate();
   });
   
   modal.querySelector('#btn-settings-close').addEventListener('click', () => modal.remove());
@@ -822,6 +1005,8 @@ $('btn-menu').addEventListener('click', () => {
   modal.addEventListener('click', e => { if(e.target === modal) modal.remove(); });
 });
 
+// ===== СТАРТ =====
+loadVersion();
 loadAll();
 if(!Object.keys(STATE.profiles).length){
   STATE.profiles['Игрок 1'] = {best:0};
