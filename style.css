@@ -1,18 +1,22 @@
 :root{
   --bg:#0f172a; --fg:#e2e8f0; --accent:#22d3ee; --accent2:#a78bfa;
   --grid:#1e293b; --snake:#22d3ee; --food:#f43f5e; --panel:#1a2332;
+  --success:#10b981; --warning:#f59e0b; --danger:#ef4444;
 }
 [data-theme="light"]{
   --bg:#f1f5f9; --fg:#0f172a; --accent:#0ea5e9; --accent2:#8b5cf6;
   --grid:#e2e8f0; --snake:#0ea5e9; --food:#ef4444; --panel:#cbd5e1;
+  --success:#059669; --warning:#d97706; --danger:#dc2626;
 }
 [data-theme="green"]{
   --bg:#001a00; --fg:#00ff66; --accent:#00ff66; --accent2:#00cc55;
   --grid:#002200; --snake:#00ff66; --food:#ffcc00; --panel:#002b00;
+  --success:#00ff66; --warning:#ffcc00; --danger:#ff3333;
 }
 [data-theme="ocean"]{
   --bg:#0c4a6e; --fg:#e0f2fe; --accent:#38bdf8; --accent2:#7dd3fc;
   --grid:#075985; --snake:#7dd3fc; --food:#fb923c; --panel:#0a3d5c;
+  --success:#34d399; --warning:#fbbf24; --danger:#f87171;
 }
 
 *{box-sizing:border-box;margin:0;padding:0}
@@ -47,7 +51,6 @@ body{
 @keyframes glow{from{filter:drop-shadow(0 0 8px #22d3ee)}to{filter:drop-shadow(0 0 24px #a78bfa)}}
 @keyframes pop{from{transform:scale(.6); opacity:0}to{transform:scale(1); opacity:1}}
 
-/* ===== НОВОЕ: блок версии на заставке ===== */
 .splash-version{
   margin-top:2rem; padding:1rem 1.5rem;
   background:rgba(255,255,255,.04);
@@ -59,8 +62,7 @@ body{
   text-align:left;
 }
 .splash-version .v-row{
-  display:flex; gap:.5rem; align-items:baseline;
-  flex-wrap:wrap;
+  display:flex; gap:.5rem; align-items:baseline; flex-wrap:wrap;
 }
 .splash-version .v-label{
   color:#64748b; font-size:.7rem; text-transform:uppercase;
@@ -73,9 +75,7 @@ body{
 .splash-version .v-value.v-version{
   color:#22d3ee; font-weight:700; font-size:1rem;
 }
-.splash-version a{
-  color:#a78bfa; text-decoration:none;
-}
+.splash-version a{color:#a78bfa; text-decoration:none}
 .splash-version a:hover{text-decoration:underline}
 
 /* ===== App ===== */
@@ -133,6 +133,10 @@ body{
 .btn:hover{background:var(--accent); color:#0f172a}
 .btn.primary{background:var(--accent); color:#0f172a; font-weight:600}
 .btn.primary:hover{background:var(--accent2)}
+.btn.success{background:var(--success); color:#fff; border-color:var(--success)}
+.btn.success:hover{opacity:.9}
+.btn.warning{background:var(--warning); color:#000; border-color:var(--warning)}
+.btn.danger{background:var(--danger); color:#fff; border-color:var(--danger)}
 
 .controls-bottom{
   min-height:140px; padding:1rem;
@@ -192,11 +196,14 @@ body{
 .tap-zones-overlay .left{grid-column:1; grid-row:1/3}
 .tap-zones-overlay .right{grid-column:2; grid-row:1/3}
 
+/* ===== Модалки ===== */
 .settings-modal{
   position:fixed; inset:0; z-index:200;
   background:rgba(0,0,0,.8);
   display:flex; align-items:center; justify-content:center;
+  animation:fadein .2s ease;
 }
+@keyframes fadein{from{opacity:0}to{opacity:1}}
 .settings-box{
   background:var(--panel); padding:2rem; border-radius:20px;
   max-width:400px; width:90%; border:1px solid rgba(255,255,255,.1);
@@ -210,7 +217,7 @@ body{
   background:var(--grid); color:var(--fg); border:1px solid rgba(255,255,255,.15);
   font-size:.95rem;
 }
-.settings-actions{display:flex; gap:.5rem; justify-content:flex-end; margin-top:1.5rem}
+.settings-actions{display:flex; gap:.5rem; justify-content:flex-end; margin-top:1.5rem; flex-wrap:wrap}
 
 .history-list{
   max-height:200px; overflow-y:auto; margin-top:1rem;
@@ -223,6 +230,37 @@ body{
 .history-item:last-child{border-bottom:none}
 .history-item .date{opacity:.7; font-size:.75rem}
 .history-item .score{color:var(--accent); font-weight:600}
+
+/* ===== Уведомление об обновлении ===== */
+.update-banner{
+  position:fixed; top:0; left:0; right:0; z-index:300;
+  background:linear-gradient(90deg, var(--accent), var(--accent2));
+  color:#0f172a; padding:.75rem 1rem;
+  display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+  box-shadow:0 4px 16px rgba(0,0,0,.3);
+  animation:slideDown .3s ease;
+  flex-wrap:wrap;
+}
+@keyframes slideDown{from{transform:translateY(-100%)}to{transform:translateY(0)}}
+.update-banner .ub-text{font-weight:600; font-size:.9rem; flex:1; min-width:200px}
+.update-banner .ub-actions{display:flex; gap:.5rem}
+.update-banner .btn{
+  padding:.35rem .75rem; font-size:.8rem;
+  background:rgba(255,255,255,.2); color:#0f172a; border-color:transparent;
+}
+.update-banner .btn:hover{background:rgba(255,255,255,.35)}
+.update-banner .btn.primary{background:#0f172a; color:#fff}
+.update-banner .btn.primary:hover{background:#1e293b}
+
+/* ===== Статус-индикатор ===== */
+.status-dot{
+  display:inline-block; width:8px; height:8px; border-radius:50%;
+  margin-right:.3rem; vertical-align:middle;
+}
+.status-dot.online{background:var(--success); box-shadow:0 0 6px var(--success)}
+.status-dot.offline{background:var(--danger); box-shadow:0 0 6px var(--danger)}
+.status-dot.checking{background:var(--warning); animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.3}}
 
 .footer{padding:.4rem; text-align:center; opacity:.6; font-size:.75rem; flex-shrink:0}
 
@@ -237,6 +275,8 @@ body{
   .joystick-zone{width:120px; height:120px}
   .stage{padding:.4rem}
   .splash-version{font-size:.75rem; padding:.8rem 1rem; max-width:90%}
+  .update-banner{padding:.6rem .8rem}
+  .update-banner .ub-text{font-size:.8rem; min-width:150px}
 }
 @media (max-width:400px){
   .stats{display:none}
